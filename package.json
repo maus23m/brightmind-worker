@@ -1,0 +1,14 @@
+{
+  "name": "brightmind-worker",
+  "version": "1.0.0",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node node_modules/@google-cloud/functions-framework --target=worker --port=8080"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.4.0"
+  }
+}
