@@ -24,7 +24,7 @@ function dedup(qs) {
   });
 }
 
-async function callClaude(apiKey, prompt, maxTokens = 4000) {
+async function callClaude(apiKey, prompt, maxTokens = 8000) {
   const res = await fetch(CLAUDE_API, {
     method: "POST",
     headers: {
@@ -174,7 +174,7 @@ Return ONLY a JSON array, no markdown, no backticks:
 
 async function generate(apiKey, subj, yr, topics, diff, n, excl = []) {
   const prompt = buildPrompt(subj, yr, topics, diff, n, excl);
-  const raw = await callClaude(apiKey, prompt, 4000);
+  const raw = await callClaude(apiKey, prompt, 8000);
   const qs = JSON.parse(raw.replace(/```json|```/g, "").trim());
   if (!Array.isArray(qs) || !qs.length) throw new Error("Empty generation");
   return qs
