@@ -383,15 +383,12 @@ functions.http("worker", async (req, res) => {
   const { jobId } = req.body;
   if (!jobId) { res.status(400).json({ error: "Missing jobId" }); return; }
 
-  // Respond immediately — work continues
-  res.status(200).json({ status: "processing" });
-
   try {
     // Fetch job
     const jobs = await supaFetch(url, key, `generation_jobs?id=eq.${jobId}`);
-    if (!jobs?.length) { console.error("Job not found:", jobId); return; }
+    if (!jobs?.length) { res.status(404).json({ error: "Job not found" }); return; }
     const job = jobs[0];
-    if (job.status !== "pending") { console.log("Job already processed:", jobId); return; }
+    if (job.status !== "pending") { res.status(200).json({ status: "already_processed" }); return; }
 
     // Mark processing
     await updateJob(url, key, jobId, { status: "processing", started_at: new Date().toISOString() });
@@ -490,6 +487,7 @@ functions.http("worker", async (req, res) => {
     });
 
     console.log(`[Job ${jobId}] Complete: ${final.length} questions (${bq.length} bank, ${final.length - bq.length} claude)`);
+    res.status(200).json({ status: "complete", count: final.length });
   } catch (e) {
     console.error(`[Job ${jobId}] Failed:`, e.message);
     await updateJob(url, key, jobId, {
@@ -497,5 +495,6 @@ functions.http("worker", async (req, res) => {
       error: e.message,
       completed_at: new Date().toISOString(),
     });
+    res.status(500).json({ status: "failed", error: e.message });
   }
 });
