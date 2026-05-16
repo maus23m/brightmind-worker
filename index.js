@@ -1,4 +1,4 @@
-// BrightMind V2.1 — GCP Cloud Function Worker
+// BrightMind V2 — GCP Cloud Function Worker
 // Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams → Describe Test → Audit → Child Agent → Bank Write
 // Diagram self-correction: Claude draws, then a simulated child describes what they see.
 // If the description doesn't match the intent, the diagram is regenerated.
@@ -210,13 +210,19 @@ Return ONLY the raw SVG starting with <svg. No markdown, no backticks, no explan
 // ── Stage 4: Describe Test ──
 
 async function describeDiagram(apiKey, svg, yr) {
-  const prompt = `You are a Year ${yr} student (age ${yr + 4}-${yr + 5}).
+  const prompt = `You are checking an SVG diagram for missing labels.
 
-Your teacher showed you this picture:
+Here is the SVG code:
 
 ${svg}
 
-Look at this SVG diagram carefully. Describe what you see in 2-3 simple sentences. What information does it show? What are the labels? If it is a chart or graph, what are the axes?`;
+List ONLY the text elements that are literally present in the SVG (inside <text> tags). Then answer these questions:
+1. Is there a title?
+2. Does the x-axis have labels? List them.
+3. Does the y-axis have labels? List them.
+4. Are there any unlabelled elements that a child would not understand?
+
+Be strict. If a label is not in a <text> tag, it does not exist.`;
 
   return await callClaude(apiKey, prompt, 500);
 }
@@ -224,16 +230,21 @@ Look at this SVG diagram carefully. Describe what you see in 2-3 simple sentence
 // ── Stage 5: Verify description matches intent ──
 
 async function verifyDiagram(apiKey, description, question, yr) {
-  const prompt = `A Year ${yr} student looked at a diagram and described it as:
+  const prompt = `An SVG diagram was checked for label completeness. Here is the report:
 "${description}"
 
-The diagram was meant to support this question:
+The diagram supports this question for a Year ${yr} student:
 "${question.q}"
-Correct answer: "${question.o[question.c]}"
 
-Does the student's description show they understood the diagram's key content — the data, labels, and structure needed to answer the question?
+A diagram FAILS if ANY of these are true:
+- A chart/graph has no x-axis labels
+- A chart/graph has no y-axis labels
+- Key elements are unlabelled
+- A child could not understand the diagram from the visible text alone
 
-Answer ONLY "YES" or "NO" followed by a one-sentence reason.`;
+Based on the report, does this diagram PASS or FAIL?
+
+Answer ONLY "YES" (pass) or "NO" (fail) followed by one sentence explaining why.`;
 
   const raw = await callClaude(apiKey, prompt, 200);
   const pass = raw.trim().toUpperCase().startsWith("YES");
