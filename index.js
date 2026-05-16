@@ -123,10 +123,31 @@ async function adaptBank(url, key, subj, yr, topics, diff, cnt, prev, seen) {
   return c;
 }
 
+// ── Read recent rejections for feedback loop ──
+
+async function getRecentRejections(url, key, subj, yr) {
+  try {
+    const rows = await supaFetch(url, key,
+      `question_rejections?subject=eq.${encodeURIComponent(subj)}&year_group=eq.${yr}&order=created_at.desc&limit=50&select=reason,question_text`
+    );
+    return rows || [];
+  } catch (e) {
+    return [];
+  }
+}
+
 // ── Stage 1: Generate questions (TEXT ONLY) ──
 
-function buildPrompt(subj, yr, topics, diff, n, excl) {
+function buildPrompt(subj, yr, topics, diff, n, excl, rejections = []) {
   const exStr = excl.length ? `\nDo NOT repeat these questions:\n${excl.map((q, i) => `${i + 1}. ${q}`).join("\n")}` : "";
+
+  let rejStr = "";
+  if (rejections.length > 0) {
+    const grouped = {};
+    rejections.forEach(r => { grouped[r.reason] = (grouped[r.reason] || 0) + 1; });
+    const summary = Object.entries(grouped).map(([reason, count]) => `- ${reason} (${count}x)`).join("\n");
+    rejStr = `\nPARENT FEEDBACK — these issues were flagged by parents reviewing previous questions for this subject and year group. Avoid these problems:\n${summary}\n`;
+  }
 
   return `You are an AI tutor with deep knowledge of the UK National Curriculum and child cognitive development.
 
@@ -140,14 +161,14 @@ PRINCIPLES:
 - Each question: under 60 words. Each explanation: under 25 words. 4 options, exactly 1 correct.
 
 For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
-${exStr}
+${rejStr}${exStr}
 
 Return ONLY a JSON array, no markdown, no backticks:
 [{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true}]`;
 }
 
-async function generate(apiKey, subj, yr, topics, diff, n, excl = []) {
-  const prompt = buildPrompt(subj, yr, topics, diff, n, excl);
+async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = []) {
+  const prompt = buildPrompt(subj, yr, topics, diff, n, excl, rejections);
   const raw = await callClaude(apiKey, prompt);
   const qs = JSON.parse(raw.replace(/```json|```/g, "").trim());
   if (!Array.isArray(qs) || !qs.length) throw new Error("Empty generation");
@@ -467,7 +488,9 @@ functions.http("worker", async (req, res) => {
 
     // Stage 1: Generate (text only)
     const excl = [...recent, ...bq.map((q) => q.q?.trim().slice(0, 80)).filter(Boolean)];
-    let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl);
+    const rejections = await getRecentRejections(url, key, subject, yr);
+    if (rejections.length) console.log(`[Job ${jobId}] Loaded ${rejections.length} parent rejections for feedback`);
+    let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl, rejections);
     if (seen.size) generated = generated.filter((q) => !seen.has(qh(q.q)));
     console.log(`[Job ${jobId}] Stage 1: Generated ${generated.length} (${generated.filter(q => q.needsDiagram).length} need diagrams)`);
 
