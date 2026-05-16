@@ -1,4 +1,4 @@
-// BrightMind V2 — GCP Cloud Function Worker
+// BrightMind V2.1 — GCP Cloud Function Worker
 // Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams → Describe Test → Audit → Child Agent → Bank Write
 // Diagram self-correction: Claude draws, then a simulated child describes what they see.
 // If the description doesn't match the intent, the diagram is regenerated.
