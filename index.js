@@ -197,6 +197,8 @@ THE STUDENT: Age ${yr + 4}-${yr + 5}, UK school.
 
 Draw a complete SVG diagram that helps this student answer the question. The diagram must be SELF-EXPLANATORY — a child must understand what it shows without reading the question.
 
+MANDATORY for charts and graphs: BOTH axes must have visible text labels. The x-axis must label every category or data point. The y-axis must have a scale with numbers. Missing axis labels = broken diagram.
+
 SVG constraints: viewBox sized to content, background #F5F3EE, text font-size >= 11, title font-size >= 14, stroke-width >= 2, under 2000 chars, no emoji. Use simple shapes, clear colours, and readable labels.
 
 Return ONLY the raw SVG starting with <svg. No markdown, no backticks, no explanation.`;
