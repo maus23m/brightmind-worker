@@ -1,12 +1,10 @@
 // BrightMind V2 — GCP Cloud Function Worker
-// Full 5-stage pipeline: Bank → Generate → Verify → Audit → Child Agent → Bank Write
-// No timeout constraints — runs until complete
+// Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams → Describe Test → Audit → Child Agent → Bank Write
+// Diagram self-correction: Claude draws, then a simulated child describes what they see.
+// If the description doesn't match the intent, the diagram is regenerated.
 
 const CLAUDE_API = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-sonnet-4-20250514";
-
-// ── ENV (set in GCP Console) ──
-// ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 // ── Helpers ──
 
@@ -24,7 +22,11 @@ function dedup(qs) {
   });
 }
 
-async function callClaude(apiKey, prompt, maxTokens = 8000) {
+async function callClaude(apiKey, messages, maxTokens = 8000) {
+  const msgs = typeof messages === "string"
+    ? [{ role: "user", content: messages }]
+    : messages;
+
   const res = await fetch(CLAUDE_API, {
     method: "POST",
     headers: {
@@ -32,11 +34,7 @@ async function callClaude(apiKey, prompt, maxTokens = 8000) {
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: maxTokens,
-      messages: [{ role: "user", content: prompt }],
-    }),
+    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: msgs }),
   });
   if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`);
   const d = await res.json();
@@ -125,26 +123,7 @@ async function adaptBank(url, key, subj, yr, topics, diff, cnt, prev, seen) {
   return c;
 }
 
-// ── Stage 1: Generation ──
-
-const SVG_EXAMPLES = `
-EXAMPLE SVG DIAGRAMS — use these as style reference when you decide a diagram helps:
-
-1. Bar chart (statistics):
-<svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg"><rect width="300" height="200" fill="#F5F3EE"/><text x="150" y="20" text-anchor="middle" font-size="14" font-weight="bold">Favourite Fruits</text><rect x="40" y="60" width="40" height="100" fill="#4A90D9" rx="3"/><text x="60" y="175" text-anchor="middle" font-size="12">Apple</text><text x="60" y="55" text-anchor="middle" font-size="11">10</text><rect x="100" y="100" width="40" height="60" fill="#E8734A" rx="3"/><text x="120" y="175" text-anchor="middle" font-size="12">Banana</text><text x="120" y="95" text-anchor="middle" font-size="11">6</text><rect x="160" y="80" width="40" height="80" fill="#5CB85C" rx="3"/><text x="180" y="175" text-anchor="middle" font-size="12">Grape</text><text x="180" y="75" text-anchor="middle" font-size="11">8</text><rect x="220" y="120" width="40" height="40" fill="#F0AD4E" rx="3"/><text x="240" y="175" text-anchor="middle" font-size="12">Pear</text><text x="240" y="115" text-anchor="middle" font-size="11">4</text></svg>
-
-2. Simple circuit (electricity):
-<svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg"><rect width="280" height="200" fill="#F5F3EE"/><rect x="40" y="40" width="200" height="120" rx="10" fill="none" stroke="#333" stroke-width="3"/><rect x="120" y="30" width="40" height="20" fill="#F0AD4E" stroke="#333" stroke-width="2"/><text x="140" y="25" text-anchor="middle" font-size="11" font-weight="bold">Battery</text><circle cx="140" cy="160" r="12" fill="#FFFFCC" stroke="#333" stroke-width="2"/><text x="140" y="185" text-anchor="middle" font-size="11">Bulb</text><rect x="30" y="90" width="20" height="20" fill="none" stroke="#333" stroke-width="2"/><text x="40" y="125" text-anchor="middle" font-size="10">Switch</text></svg>
-
-3. Angle diagram (geometry):
-<svg viewBox="0 0 250 200" xmlns="http://www.w3.org/2000/svg"><rect width="250" height="200" fill="#F5F3EE"/><line x1="40" y1="150" x2="210" y2="150" stroke="#333" stroke-width="2"/><line x1="40" y1="150" x2="160" y2="40" stroke="#333" stroke-width="2"/><path d="M 80 150 A 40 40 0 0 0 68 120" fill="none" stroke="#4A90D9" stroke-width="2"/><text x="85" y="135" font-size="14" fill="#4A90D9" font-weight="bold">35°</text><text x="125" y="170" font-size="12">Find the missing angle</text></svg>
-
-4. Cell diagram (biology):
-<svg viewBox="0 0 280 220" xmlns="http://www.w3.org/2000/svg"><rect width="280" height="220" fill="#F5F3EE"/><ellipse cx="140" cy="110" rx="120" ry="80" fill="#E8F5E9" stroke="#2E7D32" stroke-width="2"/><ellipse cx="140" cy="110" rx="35" ry="25" fill="#FFF9C4" stroke="#F57F17" stroke-width="2"/><text x="140" y="115" text-anchor="middle" font-size="11" font-weight="bold">Nucleus</text><text x="140" y="30" text-anchor="middle" font-size="13" font-weight="bold">Animal Cell</text><text x="260" y="70" font-size="10">Cell membrane</text><line x1="245" y1="73" x2="220" y2="85" stroke="#333" stroke-width="1"/><text x="60" y="160" font-size="10">Cytoplasm</text></svg>
-
-5. Force diagram (physics):
-<svg viewBox="0 0 250 250" xmlns="http://www.w3.org/2000/svg"><rect width="250" height="250" fill="#F5F3EE"/><rect x="90" y="100" width="70" height="50" fill="#BBDEFB" stroke="#1565C0" stroke-width="2" rx="4"/><text x="125" y="130" text-anchor="middle" font-size="12" font-weight="bold">5 kg</text><line x1="125" y1="100" x2="125" y2="30" stroke="#D32F2F" stroke-width="3" marker-end="url(#ah)"/><text x="135" y="55" font-size="11" fill="#D32F2F">Push 20N</text><line x1="125" y1="150" x2="125" y2="220" stroke="#1565C0" stroke-width="3" marker-end="url(#ah)"/><text x="135" y="200" font-size="11" fill="#1565C0">Weight</text><defs><marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6Z" fill="context-stroke"/></marker></defs></svg>
-`;
+// ── Stage 1: Generate questions (TEXT ONLY) ──
 
 function buildPrompt(subj, yr, topics, diff, n, excl) {
   const exStr = excl.length ? `\nDo NOT repeat these questions:\n${excl.map((q, i) => `${i + 1}. ${q}`).join("\n")}` : "";
@@ -160,33 +139,30 @@ PRINCIPLES:
 - Questions must be precisely calibrated to Year ${yr} — not too easy, not beyond their curriculum.
 - Each question: under 60 words. Each explanation: under 25 words. 4 options, exactly 1 correct.
 
-DIAGRAMS:
-- If a diagram would help the student understand the question better than words alone, include an "svg" field with a complete SVG.
-- The diagram must stand alone — a student should understand what it shows without reading the question first.
-- SVG rules: viewBox fits content, background #F5F3EE, font-size >= 14 for labels, stroke-width >= 2, under 2000 chars, use simple shapes and clear colours.
-- Do NOT use emoji in SVGs. Use shapes, lines, and text only.
-${SVG_EXAMPLES}
+For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
 ${exStr}
 
 Return ONLY a JSON array, no markdown, no backticks:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","svg":"<svg ...>...</svg> or omit if no diagram needed"}]`;
+[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true}]`;
 }
 
 async function generate(apiKey, subj, yr, topics, diff, n, excl = []) {
   const prompt = buildPrompt(subj, yr, topics, diff, n, excl);
-  const raw = await callClaude(apiKey, prompt, 8000);
+  const raw = await callClaude(apiKey, prompt);
   const qs = JSON.parse(raw.replace(/```json|```/g, "").trim());
   if (!Array.isArray(qs) || !qs.length) throw new Error("Empty generation");
   return qs
     .filter((q) => q.q && Array.isArray(q.o) && q.o.length === 4 && typeof q.c === "number")
     .map((q) => ({
-      ...q,
+      q: q.q,
+      o: q.o,
+      c: q.c,
       e: q.e || `Option ${q.c + 1}.`,
-      ...(q.svg && typeof q.svg === "string" && q.svg.trim().startsWith("<svg") ? { svg: q.svg.trim() } : {}),
+      needsDiagram: !!q.needsDiagram,
     }));
 }
 
-// ── Stage 2: Deterministic Verifier ──
+// ── Stage 2: Deterministic Verifier (maths only) ──
 
 function verify(qs, subj) {
   if (subj !== "maths") return qs;
@@ -210,7 +186,108 @@ function verify(qs, subj) {
   });
 }
 
-// ── Stage 3: Audit Agent ──
+// ── Stage 3: Draw Diagram ──
+
+async function drawDiagram(apiKey, question, yr, subj) {
+  const prompt = `You are drawing a diagram for a Year ${yr} ${subj} question.
+
+THE QUESTION: ${question.q}
+CORRECT ANSWER: ${question.o[question.c]}
+THE STUDENT: Age ${yr + 4}-${yr + 5}, UK school.
+
+Draw a complete SVG diagram that helps this student answer the question. The diagram must be SELF-EXPLANATORY — a child must understand what it shows without reading the question.
+
+SVG constraints: viewBox sized to content, background #F5F3EE, text font-size >= 11, title font-size >= 14, stroke-width >= 2, under 2000 chars, no emoji. Use simple shapes, clear colours, and readable labels.
+
+Return ONLY the raw SVG starting with <svg. No markdown, no backticks, no explanation.`;
+
+  const raw = await callClaude(apiKey, prompt, 3000);
+  const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/);
+  if (!svgMatch) return null;
+  return svgMatch[0].trim();
+}
+
+// ── Stage 4: Describe Test ──
+
+async function describeDiagram(apiKey, svg, yr) {
+  const prompt = `You are a Year ${yr} student (age ${yr + 4}-${yr + 5}).
+
+Your teacher showed you this picture:
+
+${svg}
+
+Look at this SVG diagram carefully. Describe what you see in 2-3 simple sentences. What information does it show? What are the labels? If it is a chart or graph, what are the axes?`;
+
+  return await callClaude(apiKey, prompt, 500);
+}
+
+// ── Stage 5: Verify description matches intent ──
+
+async function verifyDiagram(apiKey, description, question, yr) {
+  const prompt = `A Year ${yr} student looked at a diagram and described it as:
+"${description}"
+
+The diagram was meant to support this question:
+"${question.q}"
+Correct answer: "${question.o[question.c]}"
+
+Does the student's description show they understood the diagram's key content — the data, labels, and structure needed to answer the question?
+
+Answer ONLY "YES" or "NO" followed by a one-sentence reason.`;
+
+  const raw = await callClaude(apiKey, prompt, 200);
+  const pass = raw.trim().toUpperCase().startsWith("YES");
+  return { pass, reason: raw.trim() };
+}
+
+// ── Diagram pipeline: Draw → Describe → Verify (with retry) ──
+
+async function processDiagrams(apiKey, qs, yr, subj) {
+  const results = [];
+
+  for (const q of qs) {
+    if (!q.needsDiagram) {
+      results.push(q);
+      continue;
+    }
+
+    let svg = null;
+    let passed = false;
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      console.log(`[Diagram] Drawing for: "${q.q.slice(0, 50)}..." (attempt ${attempt})`);
+
+      svg = await drawDiagram(apiKey, q, yr, subj);
+      if (!svg) {
+        console.log(`[Diagram] Failed to generate SVG`);
+        continue;
+      }
+
+      const description = await describeDiagram(apiKey, svg, yr);
+      console.log(`[Diagram] Child described: "${description.slice(0, 80)}..."`);
+
+      const verification = await verifyDiagram(apiKey, description, q, yr);
+      console.log(`[Diagram] Verification: ${verification.pass ? "PASS" : "FAIL"} — ${verification.reason.slice(0, 80)}`);
+
+      if (verification.pass) {
+        passed = true;
+        break;
+      }
+      console.log(`[Diagram] Retrying...`);
+    }
+
+    if (passed && svg) {
+      results.push({ ...q, svg });
+    } else {
+      console.log(`[Diagram] Giving up on diagram for: "${q.q.slice(0, 50)}..."`);
+      results.push(q);
+    }
+  }
+
+  return results;
+}
+
+// ── Stage 6: Audit Agent ──
 
 async function audit(apiKey, qs, yr, subj) {
   if (!qs.length) return qs;
@@ -228,7 +305,7 @@ Audit these Year ${yr} ${subj} questions against ALL 8 criteria:
 8. Set-level diversity — flag any questions that are semantically near-duplicates of each other in this set
 
 For each question, return pass:true or pass:false.
-If pass:false AND you can fix it, include a "rewrite" object with corrected fields (q, o, c, e). Preserve the svg field unchanged if present.
+If pass:false AND you can fix it, include a "rewrite" object with corrected fields (q, o, c, e).
 If pass:false and unfixable, just return pass:false with no rewrite.
 
 Questions:
@@ -245,12 +322,7 @@ Return ONLY JSON array, no markdown:
       if (!r) return q;
       if (r.pass) return q;
       if (r.rewrite && r.rewrite.q && Array.isArray(r.rewrite.o) && r.rewrite.o.length === 4 && typeof r.rewrite.c === "number") {
-        return {
-          ...r.rewrite,
-          e: r.rewrite.e || q.e,
-          ...(q.svg ? { svg: q.svg } : {}),
-          _auditRewritten: true,
-        };
+        return { ...r.rewrite, e: r.rewrite.e || q.e, ...(q.svg ? { svg: q.svg } : {}), _auditRewritten: true };
       }
       return { ...q, _auditFailed: true, _auditReason: r.reason || "failed" };
     });
@@ -260,7 +332,7 @@ Return ONLY JSON array, no markdown:
   }
 }
 
-// ── Stage 3.5: Child Agent ──
+// ── Stage 7: Child Agent ──
 
 async function childAgent(apiKey, qs, yr, subj) {
   if (!qs.length) return qs;
@@ -273,7 +345,6 @@ Flag a question (pass: false) if:
 - The wording confuses you or uses words you haven't learned yet
 - Two options both seem correct to you
 - It requires knowledge you haven't been taught yet in Year ${yr}
-- If there's a diagram description that doesn't match what the question asks
 - The question feels like it belongs to a higher year group
 
 Be honest — if you're unsure, flag it.
@@ -290,7 +361,7 @@ Return ONLY JSON array:
     return qs.map((q, i) => {
       const r = results.find((x) => x.i === i);
       if (!r || r.pass) return q;
-      return { ...q, _childFailed: true, _childReason: r.reason || "flagged by child agent" };
+      return { ...q, _childFailed: true, _childReason: r.reason || "flagged" };
     });
   } catch (e) {
     console.error("Child agent error:", e);
@@ -298,24 +369,15 @@ Return ONLY JSON array:
   }
 }
 
-// ── Stage 4: Bank Write ──
+// ── Stage 8: Bank Write ──
 
 async function bankWrite(url, key, qs, subj, yr, topics, diff) {
   const store = qs.filter((q) => !q._fromBank && !q._auditFailed && !q._childFailed && q.q);
   if (!store.length) return;
   const rows = store.map((q) => ({
-    subject: subj,
-    year_group: yr,
-    topic: q._topic || topics[0],
-    difficulty: diff,
-    q: q.q,
-    o: q.o,
-    c: q.c,
-    e: q.e,
-    ...(q.svg ? { svg: q.svg } : {}),
-    audit_score: q._auditRewritten ? 0.7 : 0.9,
-    source: "claude",
-    content_hash: qh(q.q),
+    subject: subj, year_group: yr, topic: q._topic || topics[0], difficulty: diff,
+    q: q.q, o: q.o, c: q.c, e: q.e, ...(q.svg ? { svg: q.svg } : {}),
+    audit_score: q._auditRewritten ? 0.7 : 0.9, source: "claude", content_hash: qh(q.q),
   }));
   try {
     await fetch(`${url}/rest/v1/question_bank`, {
@@ -323,21 +385,14 @@ async function bankWrite(url, key, qs, subj, yr, topics, diff) {
       headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=minimal" },
       body: JSON.stringify(rows),
     });
-  } catch (e) {
-    console.error("Bank write error:", e);
-  }
+  } catch (e) { console.error("Bank write error:", e); }
 }
-
-// ── Record child history ──
 
 async function record(url, key, childId, qs, subj, topics) {
   if (!childId || !qs.length) return;
   try {
     const rows = qs.filter((q) => q.q).map((q) => ({
-      child_id: childId,
-      question_hash: qh(q.q),
-      topic: q._topic || topics[0] || null,
-      subject: subj,
+      child_id: childId, question_hash: qh(q.q), topic: q._topic || topics[0] || null, subject: subj,
     }));
     await fetch(`${url}/rest/v1/child_question_history`, {
       method: "POST",
@@ -347,17 +402,10 @@ async function record(url, key, childId, qs, subj, topics) {
   } catch (e) {}
 }
 
-// ── Update job status ──
-
 async function updateJob(url, key, jobId, update) {
   await fetch(`${url}/rest/v1/generation_jobs?id=eq.${jobId}`, {
     method: "PATCH",
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      Prefer: "return=minimal",
-    },
+    headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
     body: JSON.stringify(update),
   });
 }
@@ -367,7 +415,6 @@ async function updateJob(url, key, jobId, update) {
 const functions = require("@google-cloud/functions-framework");
 
 functions.http("worker", async (req, res) => {
-  // CORS
   res.set("Access-Control-Allow-Origin", "*");
   if (req.method === "OPTIONS") { res.status(204).send(""); return; }
 
@@ -375,101 +422,82 @@ functions.http("worker", async (req, res) => {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!apiKey || !url || !key) {
-    res.status(500).json({ error: "Missing env vars" });
-    return;
-  }
+  if (!apiKey || !url || !key) { res.status(500).json({ error: "Missing env vars" }); return; }
 
   const { jobId } = req.body;
   if (!jobId) { res.status(400).json({ error: "Missing jobId" }); return; }
 
   try {
-    // Fetch job
     const jobs = await supaFetch(url, key, `generation_jobs?id=eq.${jobId}`);
     if (!jobs?.length) { res.status(404).json({ error: "Job not found" }); return; }
     const job = jobs[0];
     if (job.status !== "pending") { res.status(200).json({ status: "already_processed" }); return; }
 
-    // Mark processing
     await updateJob(url, key, jobId, { status: "processing", started_at: new Date().toISOString() });
 
     const { subject, year_group: yr, topics, difficulty, question_count: count, child_id: childId, previous_ids: previousIds } = job;
-
     console.log(`[Job ${jobId}] Starting: ${subject} Y${yr} ${topics.join(",")} ${difficulty} x${count}`);
 
-    // ── Stage 0: Bank Read ──
-    let seen = new Set();
-    let recent = [];
-    if (childId) {
-      const d = await getSeen(url, key, childId, topics);
-      seen = d.h;
-      recent = d.t;
-    }
-
+    // Stage 0: Bank
+    let seen = new Set(), recent = [];
+    if (childId) { const d = await getSeen(url, key, childId, topics); seen = d.h; recent = d.t; }
     let bq = await adaptBank(url, key, subject, yr, topics, difficulty, count, previousIds || [], seen);
     const need = count - bq.length;
     console.log(`[Job ${jobId}] Stage 0: Bank ${bq.length}/${count}, need ${need}`);
 
     if (need <= 0) {
       if (childId) await record(url, key, childId, bq, subject, topics);
-      await updateJob(url, key, jobId, {
-        status: "complete",
-        questions: bq,
-        source: "bank",
-        bank_supplied: bq.length,
-        completed_at: new Date().toISOString(),
-      });
-      console.log(`[Job ${jobId}] Complete (bank only)`);
+      await updateJob(url, key, jobId, { status: "complete", questions: bq, source: "bank", bank_supplied: bq.length, completed_at: new Date().toISOString() });
+      res.status(200).json({ status: "complete", count: bq.length });
       return;
     }
 
-    // ── Stage 1: Generate ──
+    // Stage 1: Generate (text only)
     const excl = [...recent, ...bq.map((q) => q.q?.trim().slice(0, 80)).filter(Boolean)];
     let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl);
     if (seen.size) generated = generated.filter((q) => !seen.has(qh(q.q)));
-    console.log(`[Job ${jobId}] Stage 1: Generated ${generated.length}`);
+    console.log(`[Job ${jobId}] Stage 1: Generated ${generated.length} (${generated.filter(q => q.needsDiagram).length} need diagrams)`);
 
-    // ── Stage 2: Verify ──
+    // Stage 2: Verify
     const verified = verify(generated, subject);
     console.log(`[Job ${jobId}] Stage 2: Verified ${verified.length}`);
 
-    // ── Stage 3: Audit ──
-    const audited = await audit(apiKey, verified, yr, subject);
-    const auditPassed = audited.filter((q) => !q._auditFailed);
-    console.log(`[Job ${jobId}] Stage 3: Audit ${auditPassed.length}/${audited.length} passed`);
+    // Stage 3-5: Diagram pipeline
+    const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
+    console.log(`[Job ${jobId}] Stage 3-5: ${withDiagrams.filter(q => q.svg).length} diagrams added`);
 
-    // ── Stage 3.5: Child Agent ──
+    // Stage 6: Audit
+    const audited = await audit(apiKey, withDiagrams, yr, subject);
+    const auditPassed = audited.filter((q) => !q._auditFailed);
+    console.log(`[Job ${jobId}] Stage 6: Audit ${auditPassed.length}/${audited.length} passed`);
+
+    // Stage 7: Child Agent
     const childChecked = await childAgent(apiKey, auditPassed, yr, subject);
     const childPassed = childChecked.filter((q) => !q._childFailed);
-    console.log(`[Job ${jobId}] Stage 3.5: Child Agent ${childPassed.length}/${childChecked.length} passed`);
+    console.log(`[Job ${jobId}] Stage 7: Child Agent ${childPassed.length}/${childChecked.length} passed`);
 
-    // ── Stage 4: Bank Write ──
+    // Stage 8: Bank Write
     await bankWrite(url, key, childPassed, subject, yr, topics, difficulty);
 
-    // ── Combine ──
     let final = dedup([...bq, ...childPassed]);
 
-    // ── Top-up if shortfall ──
+    // Top-up
     if (final.length < count) {
       console.log(`[Job ${jobId}] Top-up: need ${count - final.length} more`);
       try {
         const topupExcl = [...excl, ...final.map((q) => q.q?.slice(0, 80)).filter(Boolean)];
         const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl);
         const topupVerified = verify(topup, subject);
+        const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject);
         const es = new Set(final.map((q) => q.q?.trim().toLowerCase().slice(0, 80)));
-        const fresh = dedup(topupVerified).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
+        const fresh = dedup(topupWithDiagrams).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
         final = [...final, ...fresh.slice(0, count - final.length)];
         await bankWrite(url, key, fresh, subject, yr, topics, difficulty);
-      } catch (e) {
-        console.error(`[Job ${jobId}] Top-up error:`, e.message);
-      }
+      } catch (e) { console.error(`[Job ${jobId}] Top-up error:`, e.message); }
     }
 
-    // ── Record history ──
     if (childId) await record(url, key, childId, final, subject, topics);
 
-    // ── Complete ──
-    // Clean internal flags before storing
     const cleanQuestions = final.map((q) => {
       const clean = { q: q.q, o: q.o, c: q.c, e: q.e };
       if (q.svg) clean.svg = q.svg;
@@ -479,22 +507,15 @@ functions.http("worker", async (req, res) => {
     });
 
     await updateJob(url, key, jobId, {
-      status: "complete",
-      questions: cleanQuestions,
-      source: bq.length ? "mixed" : "claude",
-      bank_supplied: bq.length,
-      completed_at: new Date().toISOString(),
+      status: "complete", questions: cleanQuestions, source: bq.length ? "mixed" : "claude",
+      bank_supplied: bq.length, completed_at: new Date().toISOString(),
     });
 
-    console.log(`[Job ${jobId}] Complete: ${final.length} questions (${bq.length} bank, ${final.length - bq.length} claude)`);
+    console.log(`[Job ${jobId}] Complete: ${final.length} questions (${bq.length} bank, ${final.length - bq.length} claude, ${cleanQuestions.filter(q => q.svg).length} diagrams)`);
     res.status(200).json({ status: "complete", count: final.length });
   } catch (e) {
     console.error(`[Job ${jobId}] Failed:`, e.message);
-    await updateJob(url, key, jobId, {
-      status: "failed",
-      error: e.message,
-      completed_at: new Date().toISOString(),
-    });
+    await updateJob(url, key, jobId, { status: "failed", error: e.message, completed_at: new Date().toISOString() });
     res.status(500).json({ status: "failed", error: e.message });
   }
 });
