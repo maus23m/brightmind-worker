@@ -245,7 +245,7 @@ async function drawDiagram(apiKey, question, yr, subj) {
 
   console.log(`[Diagram] Prompt: ${diagramDesc.slice(0, 300)}`);
 
-  const raw = await callClaude(apiKey, prompt, 4096, systemPrompt);
+  const raw = await callClaude(apiKey, prompt, 16000, systemPrompt);
   const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/i);
   if (!svgMatch) return null;
   return svgMatch[0].trim();
