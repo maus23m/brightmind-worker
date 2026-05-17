@@ -3,9 +3,10 @@
 // Diagrams: Claude writes the prompt (understands pedagogy), Gemini renders PNG image.
 // Images uploaded to Supabase Storage, public URL stored in svg field as <img> tag.
 
-const CLAUDE_API = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-sonnet-4-20250514";
+const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
+const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-image";
+const GEMINI_API = process.env.GEMINI_API || "https://generativelanguage.googleapis.com/v1beta/models";
 
 // ── Helpers ──
 
