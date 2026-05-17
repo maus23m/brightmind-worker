@@ -5,7 +5,6 @@
 
 const CLAUDE_API = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-sonnet-4-20250514";
-const GEMINI_MODEL = "gemini-2.0-flash-exp";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-image";
 
 // ── Helpers ──
