@@ -1,0 +1,6 @@
+{{diagram_prompt}}
+
+CONTEXT (do not display this text — use it only to ensure accuracy):
+- Question: {{question}}
+- Correct answer: {{correct_answer}}
+- The diagram must make the correct answer visually clear and findable.
