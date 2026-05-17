@@ -167,17 +167,25 @@ For each question, indicate whether a diagram would help the student understand 
 
 When needsDiagram is true, also provide diagramPrompt: tell the image generator what to draw in plain conversational language — like you're explaining to a person what to draw. Include all the data they need.
 
+CRITICAL: The diagram is the EVIDENCE for the correct answer. The child looks at the diagram to find the answer. So the diagramPrompt MUST:
+1. Contain every piece of data needed to answer the question correctly
+2. Make the correct answer visually clear and unambiguous
+3. Be completely self-contained — the drawing agent cannot see the question or options
+
+Think about it this way: if a child looks at ONLY the diagram and ONLY the question text, they must be able to find the correct answer.
+
 EXAMPLES of good diagramPrompt values:
 
-"Plot a line graph showing how many books Class 2B read each week. Title: Books Read by Class 2B. In Week 1 they read 8 books, Week 2 they read 12 books, Week 3 was the best with 16 books, then it dropped to 10 in Week 4. The y-axis should go from 0 to 20 and be labelled Number of Books. The x-axis shows Week 1, Week 2, Week 3, Week 4."
+For a line graph question where the answer is "Wednesday" (highest point):
+"Draw a line graph showing how many books Class 2B read each week. Title: Books Read by Class 2B. In Week 1 they read 8 books, Week 2 they read 12 books, Week 3 was the best with 16 books, then it dropped to 10 in Week 4. The y-axis should go from 0 to 20 and be labelled Number of Books. The x-axis shows Week 1, Week 2, Week 3, Week 4."
 
-"Draw a bar chart showing children's favourite pets. Title: Favourite Pets Survey. Cats got 7 votes, Dogs got 6, Fish got 3, Rabbits got 4, Birds got 2. The y-axis should go from 0 to 8 and be labelled Number of Children."
+For a grid/position question where the answer is "House" (3 squares forward):
+"Draw a 5x5 grid. Place a robot facing upward in the bottom-middle square. Place a ball 1 square above the robot, a tree 2 squares above the robot, and a house 3 squares above the robot. Label each object clearly. The robot should look like it's pointing upward."
 
-"Draw a simple plant cell. Label these parts clearly: cell wall on the outside, then cell membrane just inside it, a large nucleus in the middle, green chloroplasts scattered around, a big vacuole taking up most of the space, and cytoplasm filling the rest."
+For a science diagram where the answer is "nucleus":
+"Draw a simple animal cell. Label these parts clearly: cell membrane around the outside, a large round nucleus in the centre, small mitochondria scattered around, and cytoplasm filling the space. Make the nucleus the most prominent labelled part."
 
-"Draw a right-angled triangle. The base is 6cm and the height is 8cm. Mark the right angle with a small square in the corner. Write each measurement next to its side."
-
-Notice: every data point is explicitly stated, the scale range is given for charts, and the tone is conversational. Write your diagramPrompt exactly like these examples.
+Notice: every data point is explicitly stated, positions are precise, and the correct answer is visually findable. Write your diagramPrompt exactly like these examples.
 ${rejStr}${exStr}
 
 Return ONLY a JSON array, no markdown, no backticks:
@@ -245,9 +253,17 @@ Rules:
 - SVG only, absolutely nothing else`;
 
 async function drawDiagram(apiKey, question, yr, subj) {
-  const prompt = question.diagramPrompt || `Draw a diagram for this Year ${yr} ${subj} question: "${question.q}"`;
+  // Build a complete prompt: diagramPrompt + question context for consistency
+  const diagramDesc = question.diagramPrompt || `Draw a diagram for this Year ${yr} ${subj} question: "${question.q}"`;
+  
+  const prompt = `${diagramDesc}
 
-  console.log(`[Diagram] Prompt: ${prompt.slice(0, 300)}`);
+CONTEXT (do not display this text — use it only to ensure accuracy):
+- Question: ${question.q}
+- Correct answer: ${question.o[question.c]}
+- The diagram must make the correct answer visually clear and findable.`;
+
+  console.log(`[Diagram] Prompt: ${diagramDesc.slice(0, 300)}`);
 
   const raw = await callClaude(apiKey, prompt, 4096, DIAGRAM_SYSTEM_PROMPT);
   const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/i);
