@@ -1,13 +1,10 @@
 // BrightMind V2 — GCP Cloud Function Worker
-// Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams (Gemini via Vertex AI) → Audit → Child Agent → Bank Write
-// Diagrams: Claude writes the prompt (understands pedagogy), Gemini renders PNG image via Vertex AI.
-// Images uploaded to Supabase Storage, public URL stored in svg field as <img> tag.
+// Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams (Claude SVG) → Audit → Child Agent → Bank Write
+// Diagrams: Claude generates the question + diagramPrompt, then a second Claude call draws the SVG.
+// Same system prompt as the BrightMind Lab test engine — proven to produce accurate diagrams.
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-image";
-const GCP_PROJECT = process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "";
-const GCP_LOCATION = process.env.GCP_LOCATION || "europe-west1";
 
 // ── Helpers ──
 
@@ -25,10 +22,13 @@ function dedup(qs) {
   });
 }
 
-async function callClaude(apiKey, messages, maxTokens = 8000) {
+async function callClaude(apiKey, messages, maxTokens = 8000, system = null) {
   const msgs = typeof messages === "string"
     ? [{ role: "user", content: messages }]
     : messages;
+
+  const body = { model: MODEL, max_tokens: maxTokens, messages: msgs };
+  if (system) body.system = system;
 
   const res = await fetch(CLAUDE_API, {
     method: "POST",
@@ -37,7 +37,7 @@ async function callClaude(apiKey, messages, maxTokens = 8000) {
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: msgs }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`);
   const d = await res.json();
@@ -59,25 +59,6 @@ async function supaFetch(url, key, path, opts = {}) {
   }
   if (opts.headers?.Prefer?.includes("return=minimal")) return null;
   return res.json();
-}
-
-// ── GCP Access Token (auto from metadata on Cloud Run / Cloud Functions) ──
-
-let _cachedToken = null;
-let _tokenExpiry = 0;
-
-async function getAccessToken() {
-  if (_cachedToken && Date.now() < _tokenExpiry - 30000) return _cachedToken;
-
-  const res = await fetch(
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-    { headers: { "Metadata-Flavor": "Google" } }
-  );
-  if (!res.ok) throw new Error(`Metadata token ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  _cachedToken = data.access_token;
-  _tokenExpiry = Date.now() + (data.expires_in * 1000);
-  return _cachedToken;
 }
 
 // ── Stage 0: Bank Read ──
@@ -244,92 +225,36 @@ function verify(qs, subj) {
   });
 }
 
-// ── Stage 3: Gemini Diagram Generation (Vertex AI) ──
+// ── Stage 3: Claude SVG Diagram Generation ──
+// Same system prompt as the BrightMind Lab test engine
 
-async function callGemini(prompt) {
-  const token = await getAccessToken();
-  const project = GCP_PROJECT;
-  const location = GCP_LOCATION;
+const DIAGRAM_SYSTEM_PROMPT = `You are a diagram generator for a children's education app. Return ONLY a complete SVG. No explanation, no markdown, no wrapping — just raw SVG starting with <svg.
 
-  if (!project) throw new Error("GCP_PROJECT not set");
+Rules:
+- White background rect as first element
+- viewBox="0 0 800 600" (adjust if needed)
+- Clean educational style, clear labels
+- Font sizes: 14-18px labels, 20-24px titles
+- Pleasant colours for children
+- Graphs: proper axes, gridlines, data points, labels, units
+- Science: label all parts with neat leader lines
+- Maths: clear geometric constructions, measurements, angles
+- Be scientifically/mathematically accurate
+- SVG only, absolutely nothing else`;
 
-  const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
+async function drawDiagram(apiKey, question, yr, subj) {
+  const prompt = question.diagramPrompt || `Draw a diagram for this Year ${yr} ${subj} question: "${question.q}"`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
+  console.log(`[Diagram] Prompt: ${prompt.slice(0, 300)}`);
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini ${res.status}: ${errText.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  for (const candidate of data.candidates || []) {
-    for (const part of candidate.content?.parts || []) {
-      if (part.inlineData) {
-        return {
-          base64: part.inlineData.data,
-          mimeType: part.inlineData.mimeType || "image/png",
-        };
-      }
-    }
-  }
-  return null;
+  const raw = await callClaude(apiKey, prompt, 4096, DIAGRAM_SYSTEM_PROMPT);
+  const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/i);
+  if (!svgMatch) return null;
+  return svgMatch[0].trim();
 }
 
-async function uploadDiagram(supaUrl, serviceKey, imageBase64, filename, mimeType) {
-  const imageBytes = Buffer.from(imageBase64, "base64");
-  const uploadUrl = `${supaUrl}/storage/v1/object/diagrams/${filename}`;
-
-  const res = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${serviceKey}`,
-      "Content-Type": mimeType,
-      "x-upsert": "true",
-    },
-    body: imageBytes,
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Storage upload ${res.status}: ${errText.slice(0, 200)}`);
-  }
-
-  return `${supaUrl}/storage/v1/object/public/diagrams/${filename}`;
-}
-
-async function generateDiagram(supaUrl, serviceKey, question, yr, subj) {
-  const diagramDesc = question.diagramPrompt || `Draw a simple diagram for a Year ${yr} ${subj} question: "${question.q}".`;
-
-  // Pass Claude's prompt straight to Gemini — no extra instructions
-  const geminiPrompt = diagramDesc;
-
-  const image = await callGemini(geminiPrompt);
-  if (!image) return null;
-
-  const ext = image.mimeType.includes("png") ? "png" : "webp";
-  const hash = qh(question.q);
-  const filename = `${hash}_${Date.now()}.${ext}`;
-
-  const publicUrl = await uploadDiagram(supaUrl, serviceKey, image.base64, filename, image.mimeType);
-  return publicUrl;
-}
-
-async function processDiagrams(supaUrl, serviceKey, qs, yr, subj) {
+async function processDiagrams(apiKey, qs, yr, subj) {
   const results = [];
-  const THROTTLE_MS = 15000; // 15s between calls — stays under free-tier RPM
-  let diagramCount = 0;
 
   for (const q of qs) {
     if (!q.needsDiagram) {
@@ -337,37 +262,24 @@ async function processDiagrams(supaUrl, serviceKey, qs, yr, subj) {
       continue;
     }
 
-    // Throttle: wait between diagram calls (skip first)
-    if (diagramCount > 0) {
-      console.log(`[Diagram] Throttle: waiting ${THROTTLE_MS / 1000}s...`);
-      await new Promise(r => setTimeout(r, THROTTLE_MS));
-    }
-    diagramCount++;
-
-    let imgUrl = null;
+    let svg = null;
 
     for (let attempt = 1; attempt <= 2; attempt++) {
-      console.log(`[Diagram] Gemini rendering for: "${q.q.slice(0, 50)}..." (attempt ${attempt})`);
-      if (attempt === 1) console.log(`[Diagram] Prompt: ${(q.diagramPrompt || "").slice(0, 300)}`);
+      console.log(`[Diagram] Claude SVG for: "${q.q.slice(0, 50)}..." (attempt ${attempt})`);
       try {
-        imgUrl = await generateDiagram(supaUrl, serviceKey, q, yr, subj);
-        if (imgUrl) {
-          console.log(`[Diagram] Success: ${imgUrl}`);
+        svg = await drawDiagram(apiKey, q, yr, subj);
+        if (svg) {
+          console.log(`[Diagram] Success (${svg.length} chars)`);
           break;
         }
       } catch (e) {
         console.error(`[Diagram] Attempt ${attempt} failed: ${e.message}`);
-        // Back off longer on 429
-        const backoff = e.message.includes("429") ? 15000 : 5000;
-        if (attempt < 2) {
-          console.log(`[Diagram] Backing off ${backoff / 1000}s...`);
-          await new Promise(r => setTimeout(r, backoff));
-        }
+        if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
       }
     }
 
-    if (imgUrl) {
-      results.push({ ...q, svg: `<img src="${imgUrl}" alt="Diagram" style="width:100%;height:auto;display:block;" />` });
+    if (svg) {
+      results.push({ ...q, svg });
     } else {
       console.log(`[Diagram] Giving up on diagram for: "${q.q.slice(0, 50)}..."`);
       results.push(q);
@@ -513,7 +425,6 @@ functions.http("worker", async (req, res) => {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!apiKey || !url || !key) { res.status(500).json({ error: "Missing env vars" }); return; }
-  if (!GCP_PROJECT) console.warn("[WARN] GCP_PROJECT not set — diagrams will be skipped");
 
   const { jobId } = req.body;
   if (!jobId) { res.status(400).json({ error: "Missing jobId" }); return; }
@@ -555,15 +466,9 @@ functions.http("worker", async (req, res) => {
     const verified = verify(generated, subject);
     console.log(`[Job ${jobId}] Stage 2: Verified ${verified.length}`);
 
-    // Stage 3: Gemini Diagram Generation (Vertex AI)
-    let withDiagrams;
-    if (GCP_PROJECT) {
-      withDiagrams = await processDiagrams(url, key, verified, yr, subject);
-      console.log(`[Job ${jobId}] Stage 3: ${withDiagrams.filter(q => q.svg).length} diagrams rendered (Gemini/Vertex)`);
-    } else {
-      withDiagrams = verified;
-      console.log(`[Job ${jobId}] Stage 3: Skipped (no GCP_PROJECT)`);
-    }
+    // Stage 3: Claude SVG Diagrams
+    const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
+    console.log(`[Job ${jobId}] Stage 3: ${withDiagrams.filter(q => q.svg).length} diagrams drawn (Claude SVG)`);
 
     // Stage 4: Audit
     const audited = await audit(apiKey, withDiagrams, yr, subject);
@@ -587,12 +492,7 @@ functions.http("worker", async (req, res) => {
         const topupExcl = [...excl, ...final.map((q) => q.q?.slice(0, 80)).filter(Boolean)];
         const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl);
         const topupVerified = verify(topup, subject);
-        let topupWithDiagrams;
-        if (GCP_PROJECT) {
-          topupWithDiagrams = await processDiagrams(url, key, topupVerified, yr, subject);
-        } else {
-          topupWithDiagrams = topupVerified;
-        }
+        const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject);
         const es = new Set(final.map((q) => q.q?.trim().toLowerCase().slice(0, 80)));
         const fresh = dedup(topupWithDiagrams).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
         final = [...final, ...fresh.slice(0, count - final.length)];
