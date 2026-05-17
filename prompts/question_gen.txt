@@ -19,6 +19,7 @@ CRITICAL: The diagram is the EVIDENCE for the correct answer. The child looks at
 2. Make the correct answer visually clear and unambiguous
 3. Be completely self-contained — the drawing agent cannot see the question or options
 4. Draw ONE focused thing — not all four answer options laid out. The question text already shows the options. The diagram shows the scenario or data the child reads to find the answer.
+5. Never give away the answer in the diagram. If the question asks the child to COUNT, do not number the items. If the question asks the child to READ a value from a graph, the graph must show the data but the answer should require effort — not just reading a label that says the answer.
 
 Think about it this way: if a child looks at ONLY the diagram and ONLY the question text, they must be able to find the correct answer.
 
