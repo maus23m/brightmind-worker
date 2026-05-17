@@ -332,12 +332,21 @@ Style requirements:
 
 async function processDiagrams(supaUrl, serviceKey, qs, yr, subj) {
   const results = [];
+  const THROTTLE_MS = 6000; // 6s between calls — stays under ~10 RPM
+  let diagramCount = 0;
 
   for (const q of qs) {
     if (!q.needsDiagram) {
       results.push(q);
       continue;
     }
+
+    // Throttle: wait between diagram calls (skip first)
+    if (diagramCount > 0) {
+      console.log(`[Diagram] Throttle: waiting ${THROTTLE_MS / 1000}s...`);
+      await new Promise(r => setTimeout(r, THROTTLE_MS));
+    }
+    diagramCount++;
 
     let imgUrl = null;
 
@@ -351,7 +360,12 @@ async function processDiagrams(supaUrl, serviceKey, qs, yr, subj) {
         }
       } catch (e) {
         console.error(`[Diagram] Attempt ${attempt} failed: ${e.message}`);
-        if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
+        // Back off longer on 429
+        const backoff = e.message.includes("429") ? 15000 : 5000;
+        if (attempt < 2) {
+          console.log(`[Diagram] Backing off ${backoff / 1000}s...`);
+          await new Promise(r => setTimeout(r, backoff));
+        }
       }
     }
 
