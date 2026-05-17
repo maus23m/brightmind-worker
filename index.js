@@ -1,10 +1,12 @@
 // BrightMind V2 — GCP Cloud Function Worker
-// Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams → Describe Test → Audit → Child Agent → Bank Write
-// Diagram self-correction: Claude draws, then a simulated child describes what they see.
-// If the description doesn't match the intent, the diagram is regenerated.
+// Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams (Gemini) → Audit → Child Agent → Bank Write
+// Diagrams: Claude writes the prompt (understands pedagogy), Gemini renders PNG image.
+// Images uploaded to Supabase Storage, public URL stored in svg field as <img> tag.
 
 const CLAUDE_API = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-sonnet-4-20250514";
+const GEMINI_MODEL = "gemini-2.0-flash-exp";
+const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // ── Helpers ──
 
@@ -161,10 +163,18 @@ PRINCIPLES:
 - Each question: under 60 words. Each explanation: under 25 words. 4 options, exactly 1 correct.
 
 For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
+
+When needsDiagram is true, also provide diagramPrompt: a detailed text description of the diagram to generate. The description must include:
+- Exactly what objects, structures, or data to show
+- All labels and text that must appear
+- Scientific/mathematical accuracy requirements
+- Style: clean educational illustration, white background, labelled, suitable for children age ${yr + 4}-${yr + 5}
+- For charts/graphs: axis labels, scale, data values, title
+- Do NOT reference the question text — the diagram must be self-explanatory
 ${rejStr}${exStr}
 
 Return ONLY a JSON array, no markdown, no backticks:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true}]`;
+[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"detailed description..."}]`;
 }
 
 async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = []) {
@@ -180,6 +190,7 @@ async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections
       c: q.c,
       e: q.e || `Option ${q.c + 1}.`,
       needsDiagram: !!q.needsDiagram,
+      diagramPrompt: q.diagramPrompt || null,
     }));
 }
 
@@ -207,76 +218,92 @@ function verify(qs, subj) {
   });
 }
 
-// ── Stage 3: Draw Diagram ──
+// ── Stage 3: Gemini Diagram Generation ──
 
-async function drawDiagram(apiKey, question, yr, subj) {
-  const prompt = `You are drawing a diagram for a Year ${yr} ${subj} question.
+async function callGemini(geminiKey, prompt) {
+  const url = `${GEMINI_API}/${GEMINI_MODEL}:generateContent?key=${geminiKey}`;
 
-THE QUESTION: ${question.q}
-CORRECT ANSWER: ${question.o[question.c]}
-THE STUDENT: Age ${yr + 4}-${yr + 5}, UK school.
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+    }),
+    signal: AbortSignal.timeout(60000),
+  });
 
-Draw a complete SVG diagram that helps this student answer the question. The diagram must be SELF-EXPLANATORY — a child must understand what it shows without reading the question.
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini ${res.status}: ${errText.slice(0, 300)}`);
+  }
 
-MANDATORY for charts and graphs: BOTH axes must have visible text labels. The x-axis must label every category or data point. The y-axis must have a scale with numbers. Missing axis labels = broken diagram.
-
-SVG constraints: viewBox sized to content, background #F5F3EE, text font-size >= 11, title font-size >= 14, stroke-width >= 2, under 2000 chars, no emoji. Use simple shapes, clear colours, and readable labels.
-
-Return ONLY the raw SVG starting with <svg. No markdown, no backticks, no explanation.`;
-
-  const raw = await callClaude(apiKey, prompt, 3000);
-  const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/);
-  if (!svgMatch) return null;
-  return svgMatch[0].trim();
+  const data = await res.json();
+  for (const candidate of data.candidates || []) {
+    for (const part of candidate.content?.parts || []) {
+      if (part.inlineData) {
+        return {
+          base64: part.inlineData.data,
+          mimeType: part.inlineData.mimeType || "image/png",
+        };
+      }
+    }
+  }
+  return null;
 }
 
-// ── Stage 4: Describe Test ──
+async function uploadDiagram(supaUrl, serviceKey, imageBase64, filename, mimeType) {
+  const imageBytes = Buffer.from(imageBase64, "base64");
+  const uploadUrl = `${supaUrl}/storage/v1/object/diagrams/${filename}`;
 
-async function describeDiagram(apiKey, svg, yr) {
-  const prompt = `You are checking an SVG diagram for missing labels.
+  const res = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceKey}`,
+      "Content-Type": mimeType,
+      "x-upsert": "true",
+    },
+    body: imageBytes,
+  });
 
-Here is the SVG code:
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Storage upload ${res.status}: ${errText.slice(0, 200)}`);
+  }
 
-${svg}
-
-List ONLY the text elements that are literally present in the SVG (inside <text> tags). Then answer these questions:
-1. Is there a title?
-2. Does the x-axis have labels? List them.
-3. Does the y-axis have labels? List them.
-4. Are there any unlabelled elements that a child would not understand?
-
-Be strict. If a label is not in a <text> tag, it does not exist.`;
-
-  return await callClaude(apiKey, prompt, 500);
+  return `${supaUrl}/storage/v1/object/public/diagrams/${filename}`;
 }
 
-// ── Stage 5: Verify description matches intent ──
+async function generateDiagram(geminiKey, supaUrl, serviceKey, question, yr, subj) {
+  // Use Claude's diagramPrompt if available, otherwise build one
+  const diagramDesc = question.diagramPrompt || `Educational diagram for a Year ${yr} ${subj} question: "${question.q}". Clean educational illustration, white background, clearly labelled, suitable for children age ${yr + 4}-${yr + 5}.`;
 
-async function verifyDiagram(apiKey, description, question, yr) {
-  const prompt = `An SVG diagram was checked for label completeness. Here is the report:
-"${description}"
+  const geminiPrompt = `Generate a clean educational diagram image.
 
-The diagram supports this question for a Year ${yr} student:
-"${question.q}"
+${diagramDesc}
 
-A diagram FAILS if ANY of these are true:
-- A chart/graph has no x-axis labels
-- A chart/graph has no y-axis labels
-- Key elements are unlabelled
-- A child could not understand the diagram from the visible text alone
+Style requirements:
+- White or very light background
+- Clear, bold lines and shapes
+- Large readable text labels (minimum 14pt equivalent)
+- Pleasant colours suitable for children
+- No decorative clutter — only educational content
+- All text must be sharp and legible
+- If this is a chart or graph: both axes MUST have visible labels with units`;
 
-Based on the report, does this diagram PASS or FAIL?
+  const image = await callGemini(geminiKey, geminiPrompt);
+  if (!image) return null;
 
-Answer ONLY "YES" (pass) or "NO" (fail) followed by one sentence explaining why.`;
+  // Upload to Supabase Storage
+  const ext = image.mimeType.includes("png") ? "png" : "webp";
+  const hash = qh(question.q);
+  const filename = `${hash}_${Date.now()}.${ext}`;
 
-  const raw = await callClaude(apiKey, prompt, 200);
-  const pass = raw.trim().toUpperCase().startsWith("YES");
-  return { pass, reason: raw.trim() };
+  const publicUrl = await uploadDiagram(supaUrl, serviceKey, image.base64, filename, image.mimeType);
+  return publicUrl;
 }
 
-// ── Diagram pipeline: Draw → Describe → Verify (with retry) ──
-
-async function processDiagrams(apiKey, qs, yr, subj) {
+async function processDiagrams(geminiKey, supaUrl, serviceKey, qs, yr, subj) {
   const results = [];
 
   for (const q of qs) {
@@ -285,36 +312,27 @@ async function processDiagrams(apiKey, qs, yr, subj) {
       continue;
     }
 
-    let svg = null;
-    let passed = false;
+    let imgUrl = null;
 
     for (let attempt = 1; attempt <= 2; attempt++) {
-      console.log(`[Diagram] Drawing for: "${q.q.slice(0, 50)}..." (attempt ${attempt})`);
-
-      svg = await drawDiagram(apiKey, q, yr, subj);
-      if (!svg) {
-        console.log(`[Diagram] Failed to generate SVG`);
-        continue;
+      console.log(`[Diagram] Gemini rendering for: "${q.q.slice(0, 50)}..." (attempt ${attempt})`);
+      try {
+        imgUrl = await generateDiagram(geminiKey, supaUrl, serviceKey, q, yr, subj);
+        if (imgUrl) {
+          console.log(`[Diagram] Success: ${imgUrl}`);
+          break;
+        }
+      } catch (e) {
+        console.error(`[Diagram] Attempt ${attempt} failed: ${e.message}`);
       }
-
-      const description = await describeDiagram(apiKey, svg, yr);
-      console.log(`[Diagram] Child described: "${description.slice(0, 80)}..."`);
-
-      const verification = await verifyDiagram(apiKey, description, q, yr);
-      console.log(`[Diagram] Verification: ${verification.pass ? "PASS" : "FAIL"} — ${verification.reason.slice(0, 80)}`);
-
-      if (verification.pass) {
-        passed = true;
-        break;
-      }
-      console.log(`[Diagram] Retrying...`);
     }
 
-    if (passed && svg) {
-      results.push({ ...q, svg });
+    if (imgUrl) {
+      // svg field gets an <img> tag — frontend renders via boxEl.innerHTML
+      results.push({ ...q, svg: `<img src="${imgUrl}" alt="Diagram" style="width:100%;height:auto;display:block;" />` });
     } else {
       console.log(`[Diagram] Giving up on diagram for: "${q.q.slice(0, 50)}..."`);
-      results.push(q);
+      results.push(q); // question still works, just without diagram
     }
   }
 
@@ -343,7 +361,7 @@ If pass:false AND you can fix it, include a "rewrite" object with corrected fiel
 If pass:false and unfixable, just return pass:false with no rewrite.
 
 Questions:
-${JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, c: q.c, e: q.e, hasSvg: !!q.svg })))}
+${JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, c: q.c, e: q.e, hasDiagram: !!q.svg })))}
 
 Return ONLY JSON array, no markdown:
 [{"i":0,"pass":true}] or [{"i":0,"pass":false,"reason":"...","rewrite":{"q":"...","o":[...],"c":0,"e":"..."}}]`;
@@ -384,7 +402,7 @@ Flag a question (pass: false) if:
 Be honest — if you're unsure, flag it.
 
 Questions:
-${JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, hasSvg: !!q.svg })))}
+${JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, hasDiagram: !!q.svg })))}
 
 Return ONLY JSON array:
 [{"i":0,"pass":true}] or [{"i":0,"pass":false,"reason":"I don't understand what X means"}]`;
@@ -453,10 +471,12 @@ functions.http("worker", async (req, res) => {
   if (req.method === "OPTIONS") { res.status(204).send(""); return; }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!apiKey || !url || !key) { res.status(500).json({ error: "Missing env vars" }); return; }
+  if (!geminiKey) console.warn("[WARN] GEMINI_API_KEY not set — diagrams will be skipped");
 
   const { jobId } = req.body;
   if (!jobId) { res.status(400).json({ error: "Missing jobId" }); return; }
@@ -486,7 +506,7 @@ functions.http("worker", async (req, res) => {
       return;
     }
 
-    // Stage 1: Generate (text only)
+    // Stage 1: Generate (text only, with diagramPrompt where needed)
     const excl = [...recent, ...bq.map((q) => q.q?.trim().slice(0, 80)).filter(Boolean)];
     const rejections = await getRecentRejections(url, key, subject, yr);
     if (rejections.length) console.log(`[Job ${jobId}] Loaded ${rejections.length} parent rejections for feedback`);
@@ -498,21 +518,27 @@ functions.http("worker", async (req, res) => {
     const verified = verify(generated, subject);
     console.log(`[Job ${jobId}] Stage 2: Verified ${verified.length}`);
 
-    // Stage 3-5: Diagram pipeline
-    const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
-    console.log(`[Job ${jobId}] Stage 3-5: ${withDiagrams.filter(q => q.svg).length} diagrams added`);
+    // Stage 3: Gemini Diagram Generation
+    let withDiagrams;
+    if (geminiKey) {
+      withDiagrams = await processDiagrams(geminiKey, url, key, verified, yr, subject);
+      console.log(`[Job ${jobId}] Stage 3: ${withDiagrams.filter(q => q.svg).length} diagrams rendered (Gemini)`);
+    } else {
+      withDiagrams = verified;
+      console.log(`[Job ${jobId}] Stage 3: Skipped (no GEMINI_API_KEY)`);
+    }
 
-    // Stage 6: Audit
+    // Stage 4: Audit
     const audited = await audit(apiKey, withDiagrams, yr, subject);
     const auditPassed = audited.filter((q) => !q._auditFailed);
-    console.log(`[Job ${jobId}] Stage 6: Audit ${auditPassed.length}/${audited.length} passed`);
+    console.log(`[Job ${jobId}] Stage 4: Audit ${auditPassed.length}/${audited.length} passed`);
 
-    // Stage 7: Child Agent
+    // Stage 5: Child Agent
     const childChecked = await childAgent(apiKey, auditPassed, yr, subject);
     const childPassed = childChecked.filter((q) => !q._childFailed);
-    console.log(`[Job ${jobId}] Stage 7: Child Agent ${childPassed.length}/${childChecked.length} passed`);
+    console.log(`[Job ${jobId}] Stage 5: Child Agent ${childPassed.length}/${childChecked.length} passed`);
 
-    // Stage 8: Bank Write
+    // Stage 6: Bank Write
     await bankWrite(url, key, childPassed, subject, yr, topics, difficulty);
 
     let final = dedup([...bq, ...childPassed]);
@@ -524,7 +550,12 @@ functions.http("worker", async (req, res) => {
         const topupExcl = [...excl, ...final.map((q) => q.q?.slice(0, 80)).filter(Boolean)];
         const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl);
         const topupVerified = verify(topup, subject);
-        const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject);
+        let topupWithDiagrams;
+        if (geminiKey) {
+          topupWithDiagrams = await processDiagrams(geminiKey, url, key, topupVerified, yr, subject);
+        } else {
+          topupWithDiagrams = topupVerified;
+        }
         const es = new Set(final.map((q) => q.q?.trim().toLowerCase().slice(0, 80)));
         const fresh = dedup(topupWithDiagrams).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
         final = [...final, ...fresh.slice(0, count - final.length)];
