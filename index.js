@@ -184,23 +184,23 @@ PRINCIPLES:
 
 For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
 
-When needsDiagram is true, also provide diagramPrompt: a simple drawing instruction like you're asking a child to draw it. Keep it plain and direct. List the exact data. No style instructions, no formatting rules — just what to draw and the data.
+When needsDiagram is true, also provide diagramPrompt: tell the image generator what to draw in plain conversational language — like you're explaining to a person what to draw. Include all the data they need.
 
 EXAMPLES of good diagramPrompt values:
 
-For a line graph: "Draw a line graph showing temperature in degrees C over the week. Title: Weekly Temperature. Temperature on each day: Monday 5, Tuesday 10, Wednesday 25, Thursday 15, Friday 18, Saturday 20, Sunday 22."
+"Plot a line graph showing how many books Class 2B read each week. Title: Books Read by Class 2B. In Week 1 they read 8 books, Week 2 they read 12 books, Week 3 was the best with 16 books, then it dropped to 10 in Week 4. The y-axis should go from 0 to 20 and be labelled Number of Books. The x-axis shows Week 1, Week 2, Week 3, Week 4."
 
-For a bar chart: "Draw a bar chart showing favourite fruits. Title: Our Favourite Fruits. Apples 8, Bananas 5, Oranges 3, Grapes 6."
+"Draw a bar chart showing children's favourite pets. Title: Favourite Pets Survey. Cats got 7 votes, Dogs got 6, Fish got 3, Rabbits got 4, Birds got 2. The y-axis should go from 0 to 8 and be labelled Number of Children."
 
-For a science diagram: "Draw a plant cell. Label these parts: cell wall, cell membrane, nucleus, chloroplast, vacuole, cytoplasm."
+"Draw a simple plant cell. Label these parts clearly: cell wall on the outside, then cell membrane just inside it, a large nucleus in the middle, green chloroplasts scattered around, a big vacuole taking up most of the space, and cytoplasm filling the rest."
 
-For geometry: "Draw a right-angled triangle. The base is 6cm, the height is 8cm. Label the right angle with a small square. Label each side with its length."
+"Draw a right-angled triangle. The base is 6cm and the height is 8cm. Mark the right angle with a small square in the corner. Write each measurement next to its side."
 
-Keep it this simple. List the data. Say what to draw. Nothing else.
+Notice: every data point is explicitly stated, the scale range is given for charts, and the tone is conversational. Write your diagramPrompt exactly like these examples.
 ${rejStr}${exStr}
 
 Return ONLY a JSON array, no markdown, no backticks:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"simple drawing instruction with exact data..."}]`;
+[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"conversational drawing instruction with all data..."}]`;
 }
 
 async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = []) {
@@ -348,6 +348,7 @@ async function processDiagrams(supaUrl, serviceKey, qs, yr, subj) {
 
     for (let attempt = 1; attempt <= 2; attempt++) {
       console.log(`[Diagram] Gemini rendering for: "${q.q.slice(0, 50)}..." (attempt ${attempt})`);
+      if (attempt === 1) console.log(`[Diagram] Prompt: ${(q.diagramPrompt || "").slice(0, 300)}`);
       try {
         imgUrl = await generateDiagram(supaUrl, serviceKey, q, yr, subj);
         if (imgUrl) {
