@@ -1,10 +1,32 @@
 // BrightMind V2 — GCP Cloud Function Worker
 // Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams (Claude SVG) → Audit → Child Agent → Bank Write
-// Diagrams: Claude generates the question + diagramPrompt, then a second Claude call draws the SVG.
-// Same system prompt as the BrightMind Lab test engine — proven to produce accurate diagrams.
+// Prompts loaded from /prompts/ directory — edit prompts without code changes.
+
+const fs = require("fs");
+const path = require("path");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
+
+// ── Prompt Loader ──
+
+const promptCache = {};
+
+function loadPrompt(name) {
+  if (promptCache[name]) return promptCache[name];
+  const filePath = path.join(__dirname, "prompts", `${name}.txt`);
+  const text = fs.readFileSync(filePath, "utf-8").trim();
+  promptCache[name] = text;
+  return text;
+}
+
+function fillTemplate(template, vars) {
+  let result = template;
+  for (const [key, value] of Object.entries(vars)) {
+    result = result.replaceAll(`{{${key}}}`, value);
+  }
+  return result;
+}
 
 // ── Helpers ──
 
@@ -152,44 +174,18 @@ function buildPrompt(subj, yr, topics, diff, n, excl, rejections = []) {
     rejStr = `\nPARENT FEEDBACK — these issues were flagged by parents reviewing previous questions for this subject and year group. Avoid these problems:\n${summary}\n`;
   }
 
-  return `You are an AI tutor with deep knowledge of the UK National Curriculum and child cognitive development.
-
-TASK: Generate ${n} multiple-choice questions for Year ${yr} ${subj}, topics: ${topics.join(", ")}, difficulty: ${diff}.
-
-PRINCIPLES:
-- You understand what Year ${yr} students (age ${yr + 4}-${yr + 5}) have been taught and how they think.
-- For MATHS: reason about what mastery looks like for each topic at this year group. Mix applied word problems with direct procedural questions as appropriate. Use contexts children relate to.
-- For SCIENCE: Biology = knowledge of systems. Physics = application of concepts. Chemistry = both. The phenomenon is always the subject — never use fictional characters or stories to frame questions.
-- Questions must be precisely calibrated to Year ${yr} — not too easy, not beyond their curriculum.
-- Each question: under 60 words. Each explanation: under 25 words. 4 options, exactly 1 correct.
-
-For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
-
-When needsDiagram is true, also provide diagramPrompt: tell the image generator what to draw in plain conversational language — like you're explaining to a person what to draw. Include all the data they need.
-
-CRITICAL: The diagram is the EVIDENCE for the correct answer. The child looks at the diagram to find the answer. So the diagramPrompt MUST:
-1. Contain every piece of data needed to answer the question correctly
-2. Make the correct answer visually clear and unambiguous
-3. Be completely self-contained — the drawing agent cannot see the question or options
-
-Think about it this way: if a child looks at ONLY the diagram and ONLY the question text, they must be able to find the correct answer.
-
-EXAMPLES of good diagramPrompt values:
-
-For a line graph question where the answer is "Wednesday" (highest point):
-"Draw a line graph showing how many books Class 2B read each week. Title: Books Read by Class 2B. In Week 1 they read 8 books, Week 2 they read 12 books, Week 3 was the best with 16 books, then it dropped to 10 in Week 4. The y-axis should go from 0 to 20 and be labelled Number of Books. The x-axis shows Week 1, Week 2, Week 3, Week 4."
-
-For a grid/position question where the answer is "House" (3 squares forward):
-"Draw a 5x5 grid. Place a robot facing upward in the bottom-middle square. Place a ball 1 square above the robot, a tree 2 squares above the robot, and a house 3 squares above the robot. Label each object clearly. The robot should look like it's pointing upward."
-
-For a science diagram where the answer is "nucleus":
-"Draw a simple animal cell. Label these parts clearly: cell membrane around the outside, a large round nucleus in the centre, small mitochondria scattered around, and cytoplasm filling the space. Make the nucleus the most prominent labelled part."
-
-Notice: every data point is explicitly stated, positions are precise, and the correct answer is visually findable. Write your diagramPrompt exactly like these examples.
-${rejStr}${exStr}
-
-Return ONLY a JSON array, no markdown, no backticks:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"conversational drawing instruction with all data..."}]`;
+  const template = loadPrompt("question_gen");
+  return fillTemplate(template, {
+    count: String(n),
+    year: String(yr),
+    subject: subj,
+    topics: topics.join(", "),
+    difficulty: diff,
+    age_low: String(yr + 4),
+    age_high: String(yr + 5),
+    rejections: rejStr,
+    exclusions: exStr,
+  });
 }
 
 async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = []) {
@@ -234,38 +230,22 @@ function verify(qs, subj) {
 }
 
 // ── Stage 3: Claude SVG Diagram Generation ──
-// Same system prompt as the BrightMind Lab test engine
-
-const DIAGRAM_SYSTEM_PROMPT = `You are a diagram generator for a children's education app. Return ONLY a complete SVG. No explanation, no markdown, no wrapping — just raw SVG starting with <svg.
-
-Rules:
-- White background rect as first element
-- viewBox="0 0 800 600" — always use this exact viewBox, fill the space
-- Clean educational style, clear labels
-- Font sizes: 16-18px for axis labels and data labels, 22-26px for title
-- Pleasant, bold colours for children — use bright greens, oranges, blues
-- Graphs: proper axes with arrow tips, gridlines, data points as visible circles (r=5 or larger), label EVERY data point with its value above or beside the point
-- Y-axis numbers must go from lowest at bottom to highest at top, evenly spaced
-- X-axis labels must be fully readable, horizontal text
-- Science: label all parts with neat leader lines
-- Maths: clear geometric constructions, measurements, angles
-- Be scientifically/mathematically accurate
-- SVG only, absolutely nothing else`;
 
 async function drawDiagram(apiKey, question, yr, subj) {
-  // Build a complete prompt: diagramPrompt + question context for consistency
   const diagramDesc = question.diagramPrompt || `Draw a diagram for this Year ${yr} ${subj} question: "${question.q}"`;
-  
-  const prompt = `${diagramDesc}
 
-CONTEXT (do not display this text — use it only to ensure accuracy):
-- Question: ${question.q}
-- Correct answer: ${question.o[question.c]}
-- The diagram must make the correct answer visually clear and findable.`;
+  const diagramUserTemplate = loadPrompt("diagram_user");
+  const prompt = fillTemplate(diagramUserTemplate, {
+    diagram_prompt: diagramDesc,
+    question: question.q,
+    correct_answer: question.o[question.c],
+  });
+
+  const systemPrompt = loadPrompt("diagram_system");
 
   console.log(`[Diagram] Prompt: ${diagramDesc.slice(0, 300)}`);
 
-  const raw = await callClaude(apiKey, prompt, 4096, DIAGRAM_SYSTEM_PROMPT);
+  const raw = await callClaude(apiKey, prompt, 4096, systemPrompt);
   const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/i);
   if (!svgMatch) return null;
   return svgMatch[0].trim();
@@ -312,27 +292,14 @@ async function processDiagrams(apiKey, qs, yr, subj) {
 async function audit(apiKey, qs, yr, subj) {
   if (!qs.length) return qs;
   try {
-    const prompt = `You are a senior curriculum quality auditor for the UK National Curriculum.
-
-Audit these Year ${yr} ${subj} questions against ALL 8 criteria:
-1. Question quality — clear, well-formed, appropriate question type
-2. Question type — matches the topic and difficulty
-3. Internal consistency — question, options, correct answer, and explanation all agree
-4. Answer correctness — the marked correct answer is actually correct
-5. Unambiguous — exactly one option is defensibly correct
-6. Age-appropriate — suitable for Year ${yr} (age ${yr + 4}-${yr + 5})
-7. Explanation quality — concise, accurate, helps the student learn
-8. Set-level diversity — flag any questions that are semantically near-duplicates of each other in this set
-
-For each question, return pass:true or pass:false.
-If pass:false AND you can fix it, include a "rewrite" object with corrected fields (q, o, c, e).
-If pass:false and unfixable, just return pass:false with no rewrite.
-
-Questions:
-${JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, c: q.c, e: q.e, hasDiagram: !!q.svg })))}
-
-Return ONLY JSON array, no markdown:
-[{"i":0,"pass":true}] or [{"i":0,"pass":false,"reason":"...","rewrite":{"q":"...","o":[...],"c":0,"e":"..."}}]`;
+    const template = loadPrompt("audit");
+    const prompt = fillTemplate(template, {
+      year: String(yr),
+      subject: subj,
+      age_low: String(yr + 4),
+      age_high: String(yr + 5),
+      questions_json: JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, c: q.c, e: q.e, hasDiagram: !!q.svg }))),
+    });
 
     const raw = await callClaude(apiKey, prompt, 2000);
     const results = JSON.parse(raw.replace(/```json|```/g, "").trim());
@@ -357,23 +324,14 @@ Return ONLY JSON array, no markdown:
 async function childAgent(apiKey, qs, yr, subj) {
   if (!qs.length) return qs;
   try {
-    const prompt = `You are a Year ${yr} student (age ${yr + 4}-${yr + 5}) in a UK school.
-
-You are taking a ${subj} test. For each question below, decide if YOU can understand and attempt it.
-
-Flag a question (pass: false) if:
-- The wording confuses you or uses words you haven't learned yet
-- Two options both seem correct to you
-- It requires knowledge you haven't been taught yet in Year ${yr}
-- The question feels like it belongs to a higher year group
-
-Be honest — if you're unsure, flag it.
-
-Questions:
-${JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, hasDiagram: !!q.svg })))}
-
-Return ONLY JSON array:
-[{"i":0,"pass":true}] or [{"i":0,"pass":false,"reason":"I don't understand what X means"}]`;
+    const template = loadPrompt("child_agent");
+    const prompt = fillTemplate(template, {
+      year: String(yr),
+      subject: subj,
+      age_low: String(yr + 4),
+      age_high: String(yr + 5),
+      questions_json: JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, hasDiagram: !!q.svg }))),
+    });
 
     const raw = await callClaude(apiKey, prompt, 1500);
     const results = JSON.parse(raw.replace(/```json|```/g, "").trim());
