@@ -232,11 +232,13 @@ const DIAGRAM_SYSTEM_PROMPT = `You are a diagram generator for a children's educ
 
 Rules:
 - White background rect as first element
-- viewBox="0 0 800 600" (adjust if needed)
+- viewBox="0 0 800 600" — always use this exact viewBox, fill the space
 - Clean educational style, clear labels
-- Font sizes: 14-18px labels, 20-24px titles
-- Pleasant colours for children
-- Graphs: proper axes, gridlines, data points, labels, units
+- Font sizes: 16-18px for axis labels and data labels, 22-26px for title
+- Pleasant, bold colours for children — use bright greens, oranges, blues
+- Graphs: proper axes with arrow tips, gridlines, data points as visible circles (r=5 or larger), label EVERY data point with its value above or beside the point
+- Y-axis numbers must go from lowest at bottom to highest at top, evenly spaced
+- X-axis labels must be fully readable, horizontal text
 - Science: label all parts with neat leader lines
 - Maths: clear geometric constructions, measurements, angles
 - Be scientifically/mathematically accurate
