@@ -13,3 +13,4 @@ Rules:
 - Maths: clear geometric constructions, measurements, angles
 - Be scientifically/mathematically accurate
 - SVG only, absolutely nothing else
+- NO explanatory text, captions, or descriptions below the diagram. No sentences. Only labels on the diagram elements themselves (axis labels, part names, measurements). The diagram is for a TEST, not a lesson.
