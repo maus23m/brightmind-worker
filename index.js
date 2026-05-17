@@ -184,33 +184,23 @@ PRINCIPLES:
 
 For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
 
-When needsDiagram is true, also provide diagramPrompt: a COMPLETE drawing instruction with ALL data needed to render the diagram. The image generator cannot see the question — it only sees your diagramPrompt. You must include:
+When needsDiagram is true, also provide diagramPrompt: a simple drawing instruction like you're asking a child to draw it. Keep it plain and direct. List the exact data. No style instructions, no formatting rules — just what to draw and the data.
 
-For charts and graphs:
-- The chart type (line graph, bar chart, pie chart, etc.)
-- A title for the chart
-- The exact X-axis label and every category/point name (e.g. "Monday, Tuesday, Wednesday...")
-- The exact Y-axis label with units (e.g. "Temperature (°C)")
-- EVERY data value explicitly listed (e.g. "Monday 5, Tuesday 10, Wednesday 25...")
-- The Y-axis scale range (e.g. "Y-axis from 0 to 30")
+EXAMPLES of good diagramPrompt values:
 
-For science diagrams:
-- Every structure/part to draw and its label
-- Spatial relationships between parts
-- Any arrows, connections, or flow directions
+For a line graph: "Draw a line graph showing temperature in degrees C over the week. Title: Weekly Temperature. Temperature on each day: Monday 5, Tuesday 10, Wednesday 25, Thursday 15, Friday 18, Saturday 20, Sunday 22."
 
-For geometry:
-- All measurements, angles, and labels
-- Which lines are parallel, perpendicular, equal length, etc.
+For a bar chart: "Draw a bar chart showing favourite fruits. Title: Our Favourite Fruits. Apples 8, Bananas 5, Oranges 3, Grapes 6."
 
-EXAMPLE diagramPrompt for a line graph question:
-"Draw a line graph titled 'Books Read Each Month'. X-axis label: 'Month' with points: January, February, March, April, May. Y-axis label: 'Number of Books' from 0 to 10. Data: January=3, February=5, March=7, April=4, May=6. Mark each data point with a dot and connect with lines."
+For a science diagram: "Draw a plant cell. Label these parts: cell wall, cell membrane, nucleus, chloroplast, vacuole, cytoplasm."
 
-The diagramPrompt must be self-contained — the image generator has NO access to the question text.
+For geometry: "Draw a right-angled triangle. The base is 6cm, the height is 8cm. Label the right angle with a small square. Label each side with its length."
+
+Keep it this simple. List the data. Say what to draw. Nothing else.
 ${rejStr}${exStr}
 
 Return ONLY a JSON array, no markdown, no backticks:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"detailed description..."}]`;
+[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"simple drawing instruction with exact data..."}]`;
 }
 
 async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = []) {
@@ -320,18 +310,10 @@ async function uploadDiagram(supaUrl, serviceKey, imageBase64, filename, mimeTyp
 }
 
 async function generateDiagram(supaUrl, serviceKey, question, yr, subj) {
-  const diagramDesc = question.diagramPrompt || `Educational diagram for a Year ${yr} ${subj} question: "${question.q}". Clean educational illustration, white background, clearly labelled, suitable for children age ${yr + 4}-${yr + 5}.`;
+  const diagramDesc = question.diagramPrompt || `Draw a simple diagram for a Year ${yr} ${subj} question: "${question.q}".`;
 
-  const geminiPrompt = `${diagramDesc}
-
-CRITICAL rendering rules:
-- Y-axis must go from LOWEST value at the bottom to HIGHEST value at the top (0 at bottom, larger numbers going up). NEVER invert the Y-axis.
-- X-axis labels must be horizontal and fully readable
-- Every data point must have its value labelled next to it
-- White background
-- Large, clear, bold text — suitable for a 6-10 year old child
-- Clean lines, pleasant colours, no clutter
-- Both axes must have title labels with units`;
+  // Pass Claude's prompt straight to Gemini — no extra instructions
+  const geminiPrompt = diagramDesc;
 
   const image = await callGemini(geminiPrompt);
   if (!image) return null;
