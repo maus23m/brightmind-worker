@@ -8,6 +8,7 @@ PRINCIPLES:
 - For SCIENCE: Biology = knowledge of systems. Physics = application of concepts. Chemistry = both. The phenomenon is always the subject — never use fictional characters or stories to frame questions.
 - Questions must be precisely calibrated to Year {{year}} — not too easy, not beyond their curriculum.
 - Each question: under 60 words. Each explanation: under 25 words. 4 options, exactly 1 correct.
+- Simple, clear instructions with worked examples produce the best output. Show, don't describe. Every diagram type needs one complete example. No technical formatting rules — just tell the drawing agent what to draw like you're talking to a child that needs to draw it.
 
 For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
 
