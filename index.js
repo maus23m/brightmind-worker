@@ -184,13 +184,29 @@ PRINCIPLES:
 
 For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
 
-When needsDiagram is true, also provide diagramPrompt: a detailed text description of the diagram to generate. The description must include:
-- Exactly what objects, structures, or data to show
-- All labels and text that must appear
-- Scientific/mathematical accuracy requirements
-- Style: clean educational illustration, white background, labelled, suitable for children age ${yr + 4}-${yr + 5}
-- For charts/graphs: axis labels, scale, data values, title
-- Do NOT reference the question text — the diagram must be self-explanatory
+When needsDiagram is true, also provide diagramPrompt: a COMPLETE drawing instruction with ALL data needed to render the diagram. The image generator cannot see the question — it only sees your diagramPrompt. You must include:
+
+For charts and graphs:
+- The chart type (line graph, bar chart, pie chart, etc.)
+- A title for the chart
+- The exact X-axis label and every category/point name (e.g. "Monday, Tuesday, Wednesday...")
+- The exact Y-axis label with units (e.g. "Temperature (°C)")
+- EVERY data value explicitly listed (e.g. "Monday 5, Tuesday 10, Wednesday 25...")
+- The Y-axis scale range (e.g. "Y-axis from 0 to 30")
+
+For science diagrams:
+- Every structure/part to draw and its label
+- Spatial relationships between parts
+- Any arrows, connections, or flow directions
+
+For geometry:
+- All measurements, angles, and labels
+- Which lines are parallel, perpendicular, equal length, etc.
+
+EXAMPLE diagramPrompt for a line graph question:
+"Draw a line graph titled 'Books Read Each Month'. X-axis label: 'Month' with points: January, February, March, April, May. Y-axis label: 'Number of Books' from 0 to 10. Data: January=3, February=5, March=7, April=4, May=6. Mark each data point with a dot and connect with lines."
+
+The diagramPrompt must be self-contained — the image generator has NO access to the question text.
 ${rejStr}${exStr}
 
 Return ONLY a JSON array, no markdown, no backticks:
@@ -306,18 +322,16 @@ async function uploadDiagram(supaUrl, serviceKey, imageBase64, filename, mimeTyp
 async function generateDiagram(supaUrl, serviceKey, question, yr, subj) {
   const diagramDesc = question.diagramPrompt || `Educational diagram for a Year ${yr} ${subj} question: "${question.q}". Clean educational illustration, white background, clearly labelled, suitable for children age ${yr + 4}-${yr + 5}.`;
 
-  const geminiPrompt = `Generate a clean educational diagram image.
+  const geminiPrompt = `${diagramDesc}
 
-${diagramDesc}
-
-Style requirements:
-- White or very light background
-- Clear, bold lines and shapes
-- Large readable text labels (minimum 14pt equivalent)
-- Pleasant colours suitable for children
-- No decorative clutter — only educational content
-- All text must be sharp and legible
-- If this is a chart or graph: both axes MUST have visible labels with units`;
+CRITICAL rendering rules:
+- Y-axis must go from LOWEST value at the bottom to HIGHEST value at the top (0 at bottom, larger numbers going up). NEVER invert the Y-axis.
+- X-axis labels must be horizontal and fully readable
+- Every data point must have its value labelled next to it
+- White background
+- Large, clear, bold text — suitable for a 6-10 year old child
+- Clean lines, pleasant colours, no clutter
+- Both axes must have title labels with units`;
 
   const image = await callGemini(geminiPrompt);
   if (!image) return null;
@@ -332,7 +346,7 @@ Style requirements:
 
 async function processDiagrams(supaUrl, serviceKey, qs, yr, subj) {
   const results = [];
-  const THROTTLE_MS = 6000; // 6s between calls — stays under ~10 RPM
+  const THROTTLE_MS = 15000; // 15s between calls — stays under free-tier RPM
   let diagramCount = 0;
 
   for (const q of qs) {
