@@ -8,19 +8,49 @@ PRINCIPLES:
 - For SCIENCE: Biology = knowledge of systems. Physics = application of concepts. Chemistry = both. The phenomenon is always the subject — never use fictional characters or stories to frame questions.
 - Questions must be precisely calibrated to Year {{year}} — not too easy, not beyond their curriculum.
 - Each question: under 60 words. Each explanation: under 25 words. 4 options, exactly 1 correct.
+- Simple, clear instructions with worked examples produce the best output. Show, don't describe. Every diagram type needs one complete example. No technical formatting rules — just tell the drawing agent what to draw like you're talking to a child that needs to draw it.
 
 For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
 
-When needsDiagram is true, also provide diagramPrompt — a self-contained drawing instruction. The drawing agent cannot see the question or options.
+When needsDiagram is true, also provide diagramPrompt: tell the image generator what to draw in plain conversational language — like you're explaining to a person what to draw. Include all the data they need.
 
-CRITICAL — diagramPrompt rules:
-1. Contain every piece of data needed to answer the question correctly.
-2. Draw ONE focused thing — not all four answer options laid out.
-3. Every diagramPrompt MUST be in two parts — SCENE then LABELS. Every diagramPrompt MUST end with "Label the diagram with below information (and nothing more):" followed by a numbered list. No exceptions. The label list is a whitelist. Only what's listed appears on the diagram. Never put the answer in the label list — only given information.
+CRITICAL: The diagram is the EVIDENCE for the correct answer. The child looks at the diagram to find the answer. So the diagramPrompt MUST:
+1. Contain every piece of data needed to answer the question correctly but not the answer itself.
+2. Make the correct answer findable from the visual evidence — not by reading a text label that states the answer.
+3. Be completely self-contained — the drawing agent cannot see the question or options.
+4. Draw ONE focused thing — not all four answer options laid out. The question text already shows the options. The diagram shows the scenario or data the child reads to find the answer.
+5. Its a tutorial. Not a lesson where child learns science or maths. So the diagram should contain all the necessary information related to questions but not the answer itself.
+6. Never give away the answer in the diagram. If the question asks the child to COUNT, do not number the items. If the question asks the child to READ a value from a graph, the graph must show the data but the answer should require effort — not just reading a label that says the answer.
+7. The diagram must show the SCENARIO, not the ANSWER. If the question asks "which surface reflects best?" — draw the surfaces with light hitting them, but do NOT label one as "Best Reflector!" or write the answer. Let the child work it out from what they see.
+8. Every diagramPrompt MUST end with "Label the diagram with below information (and nothing more):" followed by a numbered list. No exceptions. The label list is a whitelist — only what's listed appears on the diagram. Never put the answer in the label list — only given information.
+
+Think about it this way: if a child looks at ONLY the diagram and ONLY the question text, they must be able to find the correct answer.
 
 GOOD diagramPrompt examples:
 
-"Draw a wall standing vertically and a floor going horizontally, meeting at a right angle corner. Draw a bookshelf leaning against the wall at an angle. The structure forms a triangle.
+"Draw a line graph showing how many books Class 2B read each week. Title: Books Read by Class 2B. In Week 1 they read 8 books, Week 2 they read 12 books, Week 3 was the best with 16 books, then it dropped to 10 in Week 4. The y-axis should go from 0 to 20 and be labelled Number of Books. The x-axis shows Week 1, Week 2, Week 3, Week 4.
+Label the diagram with below information (and nothing more):
+1. Y-axis labelled 'Number of Books' 0 to 20 with interval of 4
+2. X-axis labelled Week 1, Week 2, Week 3, Week 4
+3. Data points connected by lines
+4. Title
+5. Texts should be away from drawings (proportionally away but near)
+6. No overlaps between two objects unless its legit intersection"
+
+"Draw a 5x5 grid. Place a robot facing upward in the bottom-middle square. Place a ball 1 square above the robot, a tree 2 squares above the robot, and a house 3 squares above the robot.
+Label the diagram with below information (and nothing more):
+1. Each object clearly named
+2. Grid squares visible
+3. Texts should be away from drawings (proportionally away but near)
+4. No overlaps between two objects unless its legit intersection"
+
+"Draw a heart shape with a dashed vertical line down its middle, showing it has exactly 1 line of symmetry.
+Label the diagram with below information (and nothing more):
+1. The dashed line labelled 'Line of symmetry'
+2. Texts should be away from drawings (proportionally away but near)
+3. No overlaps between two objects unless its legit intersection"
+
+"Draw a wall standing vertically and a floor going horizontally, meeting at a right angle corner. Draw a bookshelf leaning against the wall at an angle. The structure forms a triangle. The angle between bookshelf and floor is 72 degrees.
 Label the diagram with below information (and nothing more):
 1. Angle between floor and shelf as 72 degrees
 2. Angle between floor and wall
@@ -57,7 +87,9 @@ BAD diagramPrompt:
 "Draw a circle, square, rectangle, and heart shape. Show which ones have lines of symmetry." ← Tries to show all 4 options. Cramped and confusing.
 "Draw light hitting three surfaces. The smooth metal reflects the most light." ← States the answer.
 "Draw the electromagnetic spectrum from left to right with waves getting shorter." ← Missing label whitelist.
+
+Keep diagrams simple and focused. One chart, one shape, one scene. Not four things side by side.
 {{rejections}}{{exclusions}}
 
 Return ONLY a JSON array, no markdown, no backticks:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"scene description then label whitelist..."}]
+[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist..."}]
