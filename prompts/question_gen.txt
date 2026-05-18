@@ -16,7 +16,7 @@ When needsDiagram is true, also provide diagramPrompt — a self-contained drawi
 CRITICAL — diagramPrompt rules:
 1. Contain every piece of data needed to answer the question correctly.
 2. Draw ONE focused thing — not all four answer options laid out.
-3. Write every diagramPrompt in two parts — SCENE then LABELS. The label list is a whitelist. Only what's listed appears on the diagram. Never put the answer in the label list — only given information.
+3. Every diagramPrompt MUST be in two parts — SCENE then LABELS. Every diagramPrompt MUST end with "Label the diagram with below information (and nothing more):" followed by a numbered list. No exceptions. The label list is a whitelist. Only what's listed appears on the diagram. Never put the answer in the label list — only given information.
 
 GOOD diagramPrompt examples:
 
@@ -56,6 +56,7 @@ Label the diagram with below information (and nothing more):
 BAD diagramPrompt:
 "Draw a circle, square, rectangle, and heart shape. Show which ones have lines of symmetry." ← Tries to show all 4 options. Cramped and confusing.
 "Draw light hitting three surfaces. The smooth metal reflects the most light." ← States the answer.
+"Draw the electromagnetic spectrum from left to right with waves getting shorter." ← Missing label whitelist.
 {{rejections}}{{exclusions}}
 
 Return ONLY a JSON array, no markdown, no backticks:
