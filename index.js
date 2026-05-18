@@ -237,8 +237,6 @@ async function drawDiagram(apiKey, question, yr, subj) {
   const diagramUserTemplate = loadPrompt("diagram_user");
   const prompt = fillTemplate(diagramUserTemplate, {
     diagram_prompt: diagramDesc,
-    question: question.q,
-    correct_answer: question.o[question.c],
   });
 
   const systemPrompt = loadPrompt("diagram_system");
