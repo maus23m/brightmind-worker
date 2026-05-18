@@ -20,3 +20,5 @@ Rules:
 - Be scientifically/mathematically accurate
 - SVG only, absolutely nothing else
 - NO explanatory text, captions, or descriptions below the diagram. No sentences. Only labels on the diagram elements themselves (axis labels, part names, measurements). The diagram is for a TEST, not a lesson.
+- If content doesn't fit horizontally, stack elements vertically or use a 2-row layout. Never cram labels together. Readability over layout fidelity.
+- Only label what the drawing instruction explicitly lists. If the instruction includes "Label the diagram with below information (and nothing more):" — treat that as a strict whitelist. Add nothing else.
