@@ -83,6 +83,78 @@ Label the diagram with below information (and nothing more):
 4. Texts should be away from drawings (proportionally away but near)
 5. No overlaps between two objects unless its legit intersection"
 
+"Draw a circle with a clear centre point. Draw a straight line from the centre to the edge of the circle (the radius). Draw another straight line all the way across the circle passing through the centre (the diameter). The radius is 7 cm. The diameter is 14 cm.
+Label the diagram with below information (and nothing more):
+1. Centre point marked with a dot
+2. Radius line labelled '7 cm'
+3. Diameter line labelled '14 cm'
+4. Title
+5. Texts should be away from drawings (proportionally away but near)
+6. No overlaps between two objects unless its legit intersection"
+
+"Draw the net of a cuboid laid out flat. The cuboid is 5 cm long, 3 cm wide, and 2 cm tall. Show all 6 rectangular faces connected and unfolded — the standard cross-shaped net. Draw dashed fold lines between each face.
+Label the diagram with below information (and nothing more):
+1. Length edges labelled '5 cm'
+2. Width edges labelled '3 cm'
+3. Height edges labelled '2 cm'
+4. Dashed fold lines
+5. Title
+6. Texts should be away from drawings (proportionally away but near)
+7. No overlaps between two objects unless its legit intersection"
+
+"Draw a right-angled triangle with the right angle at the bottom-left corner. The bottom side (horizontal) is 6 cm. The vertical side going up is 8 cm. The longest side (hypotenuse) connects the top of the vertical side to the right end of the horizontal side. Mark the right angle with a small square symbol.
+Label the diagram with below information (and nothing more):
+1. Bottom side labelled '6 cm'
+2. Vertical side labelled '8 cm'
+3. Hypotenuse labelled with a question mark '?'
+4. Right angle square symbol
+5. Title
+6. Texts should be away from drawings (proportionally away but near)
+7. No overlaps between two objects unless its legit intersection"
+
+"Draw a single rectangular plant cell, large and centred. Inside it draw: a circular nucleus near the centre, a large oval vacuole taking up most of the space, small oval chloroplasts scattered around the edges, and a thick outer boundary for the cell wall with a thinner line just inside for the cell membrane.
+Label the diagram with below information (and nothing more):
+1. Cell wall
+2. Cell membrane
+3. Nucleus
+4. Vacuole
+5. Chloroplasts
+6. Title
+7. Texts should be away from drawings (proportionally away but near)
+8. No overlaps between two objects unless its legit intersection"
+
+"Draw a single atom. In the centre draw a cluster of small circles — 6 filled circles for protons and 6 empty circles for neutrons, packed together as the nucleus. Draw two oval orbit rings around the nucleus. On the inner ring place 2 small dots for electrons. On the outer ring place 4 small dots for electrons.
+Label the diagram with below information (and nothing more):
+1. Nucleus
+2. Protons (with count 6)
+3. Neutrons (with count 6)
+4. Inner shell electrons (with count 2)
+5. Outer shell electrons (with count 4)
+6. Title
+7. Texts should be away from drawings (proportionally away but near)
+8. No overlaps between two objects unless its legit intersection"
+
+"Draw a box sitting on a flat surface. From the centre of the box, draw a thick downward arrow for gravity and a thick upward arrow of equal length for the normal reaction force. Draw a thick arrow pointing right from the box for an applied push force, and a shorter thick arrow pointing left for friction.
+Label the diagram with below information (and nothing more):
+1. Downward arrow labelled 'Weight = 50 N'
+2. Upward arrow labelled 'Normal reaction = 50 N'
+3. Right arrow labelled 'Push = 30 N'
+4. Left arrow labelled 'Friction = 10 N'
+5. Title
+6. Texts should be away from drawings (proportionally away but near)
+7. No overlaps between two objects unless its legit intersection"
+
+"Draw a transverse wave showing 3 complete wave cycles going left to right. Draw a horizontal dashed line through the middle as the rest position. The wave should have smooth, even peaks and troughs. Draw a vertical double-headed arrow from the rest position to the top of a peak. Draw a horizontal double-headed arrow from one peak to the next peak.
+Label the diagram with below information (and nothing more):
+1. Vertical arrow labelled 'Amplitude = 4 cm'
+2. Horizontal arrow labelled 'Wavelength = 6 cm'
+3. Dashed line labelled 'Rest position'
+4. One peak labelled 'Crest'
+5. One trough labelled 'Trough'
+6. Title
+7. Texts should be away from drawings (proportionally away but near)
+8. No overlaps between two objects unless its legit intersection"
+
 BAD diagramPrompt:
 "Draw a circle, square, rectangle, and heart shape. Show which ones have lines of symmetry." ← Tries to show all 4 options. Cramped and confusing.
 "Draw light hitting three surfaces. The smooth metal reflects the most light." ← States the answer.
