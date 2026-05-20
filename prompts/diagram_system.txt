@@ -13,6 +13,7 @@ Rules:
 - Graphs: proper axes with arrow tips, gridlines, data points as visible circles (r=5 or larger), label EVERY data point with its value above or beside the point
 - Y-axis numbers must go from lowest at bottom to highest at top, evenly spaced
 - X-axis labels must be fully readable, horizontal text
+- When placing multiple labels along one edge, check total text width against available space. If labels would overlap, rotate them 45 degrees, or stack them on two rows alternating up/down, or abbreviate. Never let adjacent labels touch or overlap.
 - Science: label all parts with neat leader lines
 - Maths: clear geometric constructions, measurements, angles
 - General guideline for labels: Do not overlap the label over the leader line, body of the diagram. Text of label should be always clearly readable.
