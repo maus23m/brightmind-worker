@@ -1,6 +1,7 @@
 // BrightMind V2 — GCP Cloud Function Worker
 // Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams (Claude SVG) → Audit → Child Agent → Bank Write
 // Prompts loaded from /prompts/ directory — edit prompts without code changes.
+// DEF-033 fix: questions requiring diagrams are dropped if diagram generation fails (not served diagramless)
 
 const fs = require("fs");
 const path = require("path");
@@ -241,11 +242,14 @@ async function drawDiagram(apiKey, question, yr, subj) {
 
   const systemPrompt = loadPrompt("diagram_system");
 
-  console.log(`[Diagram] Prompt: ${diagramDesc.slice(0, 300)}`);
+  console.log(`[Diagram] Prompt: ${diagramDesc.slice(0, 500)}`);
 
   const raw = await callClaude(apiKey, prompt, 16000, systemPrompt);
   const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/i);
-  if (!svgMatch) return null;
+  if (!svgMatch) {
+    console.error(`[Diagram] No SVG found in response. Raw (first 500 chars): ${raw.slice(0, 500)}`);
+    return null;
+  }
   return svgMatch[0].trim();
 }
 
@@ -261,15 +265,17 @@ async function processDiagrams(apiKey, qs, yr, subj) {
     let svg = null;
 
     for (let attempt = 1; attempt <= 2; attempt++) {
-      console.log(`[Diagram] Claude SVG for: "${q.q.slice(0, 50)}..." (attempt ${attempt})`);
+      console.log(`[Diagram] Attempt ${attempt} for: "${q.q.slice(0, 80)}"`);
       try {
         svg = await drawDiagram(apiKey, q, yr, subj);
         if (svg) {
           console.log(`[Diagram] Success (${svg.length} chars)`);
           break;
+        } else {
+          console.error(`[Diagram] Attempt ${attempt} returned no valid SVG`);
         }
       } catch (e) {
-        console.error(`[Diagram] Attempt ${attempt} failed: ${e.message}`);
+        console.error(`[Diagram] Attempt ${attempt} error: ${e.message}`);
         if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
       }
     }
@@ -277,8 +283,7 @@ async function processDiagrams(apiKey, qs, yr, subj) {
     if (svg) {
       results.push({ ...q, svg });
     } else {
-      console.log(`[Diagram] Giving up on diagram for: "${q.q.slice(0, 50)}..."`);
-      results.push(q);
+      console.error(`[Diagram] DROPPED question — diagram required but generation failed after 2 attempts. Question: "${q.q}" | diagramPrompt: "${(q.diagramPrompt || '').slice(0, 500)}"`);
     }
   }
 
@@ -442,7 +447,7 @@ functions.http("worker", async (req, res) => {
 
     // Stage 3: Claude SVG Diagrams
     const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
-    console.log(`[Job ${jobId}] Stage 3: ${withDiagrams.filter(q => q.svg).length} diagrams drawn (Claude SVG)`);
+    console.log(`[Job ${jobId}] Stage 3: ${withDiagrams.filter(q => q.svg).length} diagrams drawn, ${verified.length - withDiagrams.length} dropped (Claude SVG)`);
 
     // Stage 4: Audit
     const audited = await audit(apiKey, withDiagrams, yr, subject);
