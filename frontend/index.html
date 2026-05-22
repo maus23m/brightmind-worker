@@ -49,6 +49,9 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
   font-weight: 800; font-size: 15px; cursor: pointer; border: none; transition: all 0.2s;
 }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important; }
+.btn.btn-loading { position: relative; color: transparent !important; pointer-events: none; }
+.btn.btn-loading::after { content: ''; position: absolute; width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; top: 50%; left: 50%; margin-top: -9px; margin-left: -9px; }
+.btn-secondary.btn-loading::after { border-color: rgba(0,33,71,0.15); border-top-color: var(--oxford); }
 .btn-primary { background: linear-gradient(135deg, var(--oxford), #004080); color: white; box-shadow: 0 4px 15px rgba(0,33,71,0.3); }
 .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,33,71,0.4); }
 .btn-secondary { background: var(--bg); color: var(--oxford); border: 2px solid var(--border); }
@@ -523,7 +526,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
     <div class="auth-logo">
       <div class="auth-logo-mark">🧠</div>
       <h1>BrightMind Tutor</h1>
-      <p>AI-Powered Maths & Science Tutoring</p>
+      <p>AI-Powered Maths &amp; Science Tutoring</p>
     </div>
 
     <div class="auth-tabs">
@@ -952,8 +955,20 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
           <button class="year-btn" onclick="selectYear(10,this)">Year 10</button>
         </div>
       </div>
+      <!-- CR-008: Child selector on Step 1 -->
+      <div style="margin-top:20px;" id="step1-child-section">
+        <div style="font-size:13px;font-weight:800;color:var(--oxford);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Assign to Child</div>
+        <div id="step1-child-assign" style="padding:12px;border:2px solid var(--border);border-radius:10px;font-size:14px;font-weight:700;color:var(--oxford);background:var(--bg);">
+          Select a year group first
+        </div>
+        <select id="step1-child-select" class="hidden" style="width:100%;padding:12px;border:2px solid var(--border);border-radius:10px;font-family:var(--font);font-size:14px;outline:none;cursor:pointer;" onchange="S.assignedChildId=this.value">
+        </select>
+        <div id="step1-no-children" class="hidden" style="font-size:13px;color:var(--red);margin-top:8px;font-weight:700;">
+          ⚠️ No children in this year group. <a href="#" onclick="goToScreen('screen-profiles')" style="color:var(--oxford)">Add a child first →</a>
+        </div>
+      </div>
       <div class="wizard-actions">
-        <div id="s1-err" class="form-error">Please select a subject and year group</div>
+        <div id="s1-err" class="form-error">Please select a subject, year group and child</div>
         <button class="btn btn-primary ml-auto" onclick="wizNext(1)">Next: Select Topics →</button>
       </div>
     </div>
@@ -2878,6 +2893,46 @@ function applyAdaptiveSuggestion() {
 // WIZARD (§5.2)
 // ════════════════════════════════════════════════════
 function goToWizard() {
+  // CR-007: Check for a pending generation job from a previous session
+  const pendingJob = localStorage.getItem('bmt_pending_job');
+  if (pendingJob) {
+    try {
+      const job = JSON.parse(pendingJob);
+      // Only resume if less than 10 minutes old
+      if (Date.now() - job.startedAt < 600000) {
+        S._lastJobId = job.jobId;
+        S.subject = job.subject; S.year = job.year; S.topics = job.topics;
+        S.difficulty = job.difficulty; S.questionCount = job.count;
+        S.assignedChildId = job.childId;
+        S.generatedQuestions = []; S.previewIndex = 0; S_flagged = new Set();
+        updateWizardProgress(4);
+        showWizStep(4);
+        showScreen('screen-wizard');
+        logAgent('orchestrator', `Resuming pending generation job: ${job.jobId}`, 'ok');
+        // Show context
+        const ctxEl = document.getElementById('gen-context');
+        if (ctxEl) {
+          const child = S.children.find(c => c.id === job.childId);
+          const childName = child ? child.name : 'Unassigned';
+          const subjectLabel = job.subject.charAt(0).toUpperCase() + job.subject.slice(1);
+          ctxEl.innerHTML = `<span style="background:var(--oxford);color:white;padding:2px 10px;border-radius:6px;">${childName}</span>`
+            + `<span style="background:var(--cambridge-light);color:var(--oxford);padding:2px 10px;border-radius:6px;">Year ${job.year} ${subjectLabel}</span>`
+            + job.topics.map(t => `<span style="background:var(--bg);border:1px solid var(--border);padding:2px 10px;border-radius:6px;">${t}</span>`).join('');
+        }
+        // Resume polling
+        document.getElementById('gen-loading').classList.remove('hidden');
+        document.getElementById('gen-preview').classList.add('hidden');
+        document.getElementById('gen-actions').classList.add('hidden');
+        document.getElementById('gen-status-text').textContent = 'Resuming generation...';
+        document.getElementById('gen-loading-msg').textContent = 'Checking for your questions...';
+        resumePendingJob(job.jobId);
+        return;
+      } else {
+        localStorage.removeItem('bmt_pending_job');
+      }
+    } catch(e) { localStorage.removeItem('bmt_pending_job'); }
+  }
+
   // Reset wizard state
   S.subject = null; S.year = null; S.topics = []; S.difficulty = 'medium';
   S_openCat = null; S_activeCat = null; S_flagged = new Set();
@@ -2966,40 +3021,62 @@ function updateChildAssignment() {
   const label = document.getElementById('child-assign-label');
   const sel   = document.getElementById('child-select');
   const msg   = document.getElementById('no-children-msg');
-  if (!label || !sel || !msg) return;
+
+  // CR-008: Also update Step 1 child selector
+  const s1Label = document.getElementById('step1-child-assign');
+  const s1Sel   = document.getElementById('step1-child-select');
+  const s1Msg   = document.getElementById('step1-no-children');
 
   const matching = S.children.filter(c => c.yearGroup == S.year);
 
+  // Helper to set both Step 1 and Step 3 selectors
+  function setBoth(labelText, showSel, selHtml, msgHtml, childId) {
+    // Step 1
+    if (s1Label && s1Sel && s1Msg) {
+      if (showSel) {
+        s1Label.classList.add('hidden');
+        s1Sel.classList.remove('hidden');
+        s1Sel.innerHTML = selHtml;
+      } else {
+        s1Label.textContent = labelText;
+        s1Label.classList.remove('hidden');
+        s1Sel.classList.add('hidden');
+      }
+      if (msgHtml) { s1Msg.innerHTML = msgHtml; s1Msg.classList.remove('hidden'); }
+      else { s1Msg.classList.add('hidden'); }
+    }
+    // Step 3 (legacy)
+    if (label && sel && msg) {
+      if (showSel) {
+        label.classList.add('hidden');
+        sel.classList.remove('hidden');
+        sel.innerHTML = selHtml;
+      } else {
+        label.textContent = labelText;
+        label.classList.remove('hidden');
+        sel.classList.add('hidden');
+      }
+      if (msgHtml) { msg.innerHTML = msgHtml; msg.classList.remove('hidden'); }
+      else { msg.classList.add('hidden'); }
+    }
+    if (childId) S.assignedChildId = childId;
+  }
+
   if (matching.length === 0) {
-    // No children in this year group — show all children as fallback
     if (S.children.length === 0) {
-      label.textContent = 'No children added';
-      label.classList.remove('hidden');
-      sel.classList.add('hidden');
-      msg.classList.remove('hidden');
+      setBoth('No children added', false, '', null, null);
+      if (s1Msg) { s1Msg.innerHTML = '⚠️ No children added. <a href="#" onclick="goToScreen(\'screen-profiles\')" style="color:var(--oxford)">Add a child first →</a>'; s1Msg.classList.remove('hidden'); }
+      if (msg) { msg.classList.remove('hidden'); }
     } else {
-      // Show warning but allow selecting any child
-      label.classList.add('hidden');
-      sel.classList.remove('hidden');
-      sel.innerHTML = S.children.map(c => `<option value="${c.id}">${c.name} (Year ${c.yearGroup||'?'})</option>`).join('');
-      msg.innerHTML = '⚠️ No children in Year ' + S.year + '. Select a child or <a href="#" onclick="goToScreen(\'screen-profiles\')" style="color:var(--oxford)">add one →</a>';
-      msg.classList.remove('hidden');
-      S.assignedChildId = sel.value;
+      const html = S.children.map(c => `<option value="${c.id}">${c.name} (Year ${c.yearGroup||'?'})</option>`).join('');
+      const warnHtml = '⚠️ No children in Year ' + S.year + '. Select a child or <a href="#" onclick="goToScreen(\'screen-profiles\')" style="color:var(--oxford)">add one →</a>';
+      setBoth('', true, html, warnHtml, S.children[0]?.id);
     }
   } else if (matching.length === 1) {
-    // Exactly one child — auto-assign, show as label
-    S.assignedChildId = matching[0].id;
-    label.textContent = matching[0].name + ' (Year ' + (matching[0].yearGroup || '?') + ')';
-    label.classList.remove('hidden');
-    sel.classList.add('hidden');
-    msg.classList.add('hidden');
+    setBoth(matching[0].name + ' (Year ' + (matching[0].yearGroup || '?') + ')', false, '', null, matching[0].id);
   } else {
-    // Multiple children in same year — show selector
-    label.classList.add('hidden');
-    sel.classList.remove('hidden');
-    sel.innerHTML = matching.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-    S.assignedChildId = sel.value;
-    msg.classList.add('hidden');
+    const html = matching.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    setBoth('', true, html, null, matching[0]?.id);
   }
 }
 
@@ -3197,6 +3274,10 @@ function wizNext(step) {
   hideErr('s1-err'); hideErr('s2-err');
   if (step === 1) {
     if (!S.subject || !S.year) { showErr('s1-err'); return; }
+    // CR-008: Validate child assignment from Step 1
+    const s1Sel = document.getElementById('step1-child-select');
+    if (s1Sel && !s1Sel.classList.contains('hidden')) S.assignedChildId = s1Sel.value;
+    if (!S.assignedChildId && S.children.length > 0) { showErr('s1-err'); return; }
     S.topics = [];
     renderTopicGrid();
     updateWizardProgress(2);
@@ -3395,6 +3476,15 @@ async function callEdgeFunction() {
   console.log('[BM] Job ID:', jobId);
   logAgent('orchestrator', `Job submitted: ${jobId}`, 'ok');
 
+  // CR-007: Persist job so it survives page navigation
+  try {
+    localStorage.setItem('bmt_pending_job', JSON.stringify({
+      jobId, subject: S.subject, year: S.year, topics: S.topics,
+      difficulty: S.difficulty, count: S.questionCount,
+      childId: S.assignedChildId, startedAt: Date.now(),
+    }));
+  } catch(e) {}
+
   // Step 2: Poll for completion
   const POLL_INTERVAL = 3000; // 3 seconds
   const MAX_POLLS = 120;      // 6 minutes max
@@ -3432,6 +3522,7 @@ async function callEdgeFunction() {
 
       if (pollData.status === 'complete') {
         logAgent('designer', `Job complete: ${pollData.count} questions — ${pollData.bankSupplied || 0} from bank`, 'ok');
+        localStorage.removeItem('bmt_pending_job');
         return pollData.questions;
       }
 
@@ -3494,6 +3585,47 @@ async function recheckJob() {
     console.error('[BM] Recheck error:', e);
     if (btn) { btn.disabled = false; btn.textContent = 'Check Again'; }
   }
+}
+
+// CR-007: Resume a pending generation job after page navigation
+async function resumePendingJob(jobId) {
+  const STATUS_URL = `${SUPABASE_URL}/functions/v1/job-status`;
+  const loadingMsgs = ['Checking for your questions...','AI is finishing up...','Almost there...'];
+  for (let i = 0; i < 120; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const el = document.getElementById('gen-loading-msg');
+    if (el) el.textContent = loadingMsgs[Math.min(Math.floor(i/4), loadingMsgs.length-1)];
+    try {
+      const res = await fetch(STATUS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.token || SUPABASE_KEY}` },
+        body: JSON.stringify({ jobId }),
+      });
+      const data = await res.json();
+      if (data.status === 'complete' && data.questions?.length > 0) {
+        localStorage.removeItem('bmt_pending_job');
+        S.generatedQuestions = data.questions;
+        S.previewIndex = 0;
+        document.getElementById('gen-loading').classList.add('hidden');
+        document.getElementById('gen-preview').classList.remove('hidden');
+        document.getElementById('gen-actions').classList.remove('hidden');
+        document.getElementById('gen-status-text').textContent = `${data.questions.length} questions ready (✨ AI-generated) — review them below, then confirm.`;
+        renderPreview();
+        logAgent('orchestrator', `Pending job complete: ${data.questions.length} questions`, 'ok');
+        return;
+      }
+      if (data.status === 'failed') {
+        localStorage.removeItem('bmt_pending_job');
+        document.getElementById('gen-loading').classList.add('hidden');
+        document.getElementById('gen-status-text').textContent = `Generation failed: ${data.error || 'Unknown error'}. Please try again.`;
+        logAgent('orchestrator', `Pending job failed: ${data.error}`, 'err');
+        return;
+      }
+    } catch(e) { if (i >= 119) break; }
+  }
+  localStorage.removeItem('bmt_pending_job');
+  document.getElementById('gen-loading').classList.add('hidden');
+  document.getElementById('gen-status-text').innerHTML = `<p>Generation is taking longer than expected. <button onclick="recheckJob()" class="btn btn-primary btn-sm">Check Again</button></p>`;
 }
 
 // ════════════════════════════════════════════════════
@@ -4295,6 +4427,21 @@ function showToast(msg, type='') {
   }, 3000);
 }
 
+// CR-006: Button loading state utilities
+function setLoading(btn, loadingText) {
+  if (!btn) return;
+  btn._origText = btn.textContent;
+  btn.disabled = true;
+  if (loadingText) { btn.textContent = loadingText; }
+  else { btn.classList.add('btn-loading'); }
+}
+function clearLoading(btn) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.classList.remove('btn-loading');
+  if (btn._origText) { btn.textContent = btn._origText; delete btn._origText; }
+}
+
 // ════════════════════════════════════════════════════
 // M3 — PROGRESS SCREEN (§5.5)
 // ════════════════════════════════════════════════════
@@ -4357,8 +4504,7 @@ function renderResultsHistory(results) {
   empty.classList.add('hidden');
   logAgent('reviewer', `Results history rendered: ${sorted.length} test(s) — per-question breakdown available for parent review ✓`, 'ok');
 
-  // CR-004: Number tutorials with the same topic (parent set same topic M times)
-  // Group by subject+topics to find distinct tutorials, then number them
+  // CR-004: Number tutorials with the same topic
   const tutorialsByTopic = {};
   sorted.forEach(r => {
     const topicKey = (r.subject||'') + '|' + ((r.topics||[]).join(','));
@@ -4367,7 +4513,7 @@ function renderResultsHistory(results) {
     if (tid && !tutorialsByTopic[topicKey].includes(tid)) tutorialsByTopic[topicKey].push(tid);
   });
 
-  // CR-002: Count attempts per tutorial (child retakes same tutorial N times)
+  // CR-002: Count attempts per tutorial
   const attemptsByTutorial = {};
   sorted.forEach(r => {
     const tid = r.tutorialId || r.tutorial_id || '';
@@ -4385,19 +4531,19 @@ function renderResultsHistory(results) {
     const topics  = (r.topics || []).join(', ') || 'Mixed topics';
     const answers = r.answers || [];
 
-    // CR-003: Look up difficulty from tutorial
+    // CR-003: Difficulty badge
     const tut = S.tutorials.find(t => t.id === r.tutorialId);
     const diff = tut ? (tut.difficulty||'').charAt(0).toUpperCase() + (tut.difficulty||'').slice(1) : '';
     const diffBadge = diff ? ` · ${diff}` : '';
 
-    // CR-004: Tutorial number for same topic (e.g. "Standard Form #2")
+    // CR-004: Tutorial number for same topic
     const topicKey = (r.subject||'') + '|' + ((r.topics||[]).join(','));
     const tid = r.tutorialId || r.tutorial_id || '';
     const tutorialsForTopic = tutorialsByTopic[topicKey] || [];
     const tutNum = tutorialsForTopic.indexOf(tid) + 1;
     const tutLabel = tutorialsForTopic.length > 1 ? ` #${tutNum}` : '';
 
-    // CR-002: Attempt number for same tutorial (e.g. "Attempt 2")
+    // CR-002: Attempt number for same tutorial
     attemptSeen[tid] = (attemptSeen[tid]||0) + 1;
     const totalAttempts = attemptsByTutorial[tid] || 1;
     const attemptNum = attemptSeen[tid];
