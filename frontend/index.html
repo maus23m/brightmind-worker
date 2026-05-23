@@ -290,6 +290,10 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
 .topic-chip.selected { border-color: var(--oxford); background: #EFF5FF; color: var(--oxford); font-weight: 800; }
 .topic-check { width: 16px; height: 16px; border-radius: 3px; border: 2px solid var(--border); background: white; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; transition: all 0.15s; }
 .topic-chip.selected .topic-check { background: var(--oxford); border-color: var(--oxford); color: white; }
+.topic-progress { margin-left: auto; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 8px; font-family: var(--mono); flex-shrink: 0; }
+.tp-done { background: var(--green-light); color: var(--green); }
+.tp-partial { background: var(--amber-light); color: #7B5800; }
+.tp-none { background: var(--bg); color: var(--muted); }
 .selected-count { font-size: 12px; color: var(--muted); margin-top: 8px; font-style: italic; }
 
 /* Accordion drilldown */
@@ -3249,14 +3253,36 @@ function renderTopicGrid() {
     'Biology': '🌿', 'Chemistry': '⚗️', 'Physics': '⚡', 'Scientific Method': '🔬',
   };
 
+  // CR-009: per-topic tutorial progress for the assigned child.
+  // For each topic, count tutorials covering it and how many are completed.
+  const childId = S.assignedChildId;
+  const completedTutIds = new Set((S.results || [])
+    .filter(r => !childId || r.childId === childId)
+    .map(r => String(r.tutorialId)));
+  function topicProgress(topic) {
+    if (!childId) return null;
+    const tuts = (S.tutorials || []).filter(t =>
+      t.childId === childId && (t.topics || []).includes(topic));
+    if (tuts.length === 0) return null;
+    const done = tuts.filter(t => completedTutIds.has(String(t.id))).length;
+    return { done, total: tuts.length };
+  }
+
   container.innerHTML = Object.entries(data).map(([cat, topics]) => {
     const icon = catIcons[cat] || '📚';
     const catId = 'cat_' + cat.replace(/[^a-zA-Z0-9]/g,'_');
     const topicsHtml = topics.map(t => {
       const id = 'tc_' + t.replace(/[^a-zA-Z0-9]/g,'_');
+      const prog = topicProgress(t);
+      let badge = '';
+      if (prog) {
+        const cls = prog.done === prog.total ? 'tp-done' : prog.done > 0 ? 'tp-partial' : 'tp-none';
+        badge = `<span class="topic-progress ${cls}" title="${prog.done} of ${prog.total} tutorial(s) completed">${prog.done}/${prog.total}</span>`;
+      }
       return `<button class="topic-chip" id="${id}" onclick="selectTopic('${t.replace(/'/g,"\\'")}','${cat.replace(/'/g,"\\'")}',this)">
         <div class="topic-check" id="${id}_chk"></div>
         <span>${t}</span>
+        ${badge}
       </button>`;
     }).join('');
     return `
