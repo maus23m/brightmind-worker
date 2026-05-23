@@ -642,6 +642,18 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
         </div>
       </div>
 
+      <!-- CR-007: Pending generation job banner — shown when a tutorial is generating or ready -->
+      <div id="pending-job-banner" class="hidden" style="border-radius:12px;padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="font-size:13px;color:var(--text);display:flex;align-items:center;gap:10px;">
+          <span id="pending-job-icon" style="font-size:20px;">⏳</span>
+          <span id="pending-job-text"><strong style="color:var(--oxford)">A tutorial is still generating…</strong> You can keep using the app — we'll keep working on it.</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0;">
+          <button class="btn btn-xs" id="pending-job-btn" style="background:var(--oxford);color:white;" onclick="resumeFromBanner()">View progress →</button>
+          <button class="btn btn-secondary btn-xs" onclick="dismissPendingJob()">Dismiss</button>
+        </div>
+      </div>
+
       <!-- GET STARTED GUIDE — shown to first-time parents with no children -->
       <div id="get-started-guide" class="hidden" style="background:linear-gradient(135deg,#002147,#004080);border-radius:20px;padding:28px;margin-bottom:24px;color:white;position:relative;">
         <button onclick="dismissGetStarted()" style="position:absolute;top:16px;right:16px;background:rgba(255,255,255,0.15);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;">✕</button>
@@ -2548,7 +2560,144 @@ function renderDashboard() {
   renderChildCards();
   renderUpcomingTutorials();
   renderRecentResults();
+  checkPendingJob();
   logAgent('orchestrator', 'Dashboard rendered from Supabase data ✓', 'ok');
+}
+
+// CR-007: Check for a pending generation job and show/update the dashboard banner.
+// Does a single status fetch so the banner can reflect generating vs ready vs failed.
+async function checkPendingJob() {
+  const banner = document.getElementById('pending-job-banner');
+  if (!banner) return;
+
+  const raw = localStorage.getItem('bmt_pending_job');
+  if (!raw) { banner.classList.add('hidden'); return; }
+
+  let job;
+  try { job = JSON.parse(raw); } catch(e) { localStorage.removeItem('bmt_pending_job'); banner.classList.add('hidden'); return; }
+
+  // Expire stale jobs (older than 10 minutes)
+  if (Date.now() - job.startedAt > 600000) {
+    localStorage.removeItem('bmt_pending_job');
+    banner.classList.add('hidden');
+    return;
+  }
+
+  // Show banner immediately in "generating" state
+  banner.classList.remove('hidden');
+  setPendingBannerState('generating');
+
+  // Single status check — update banner if the job has finished
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/job-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.token || SUPABASE_KEY}` },
+      body: JSON.stringify({ jobId: job.jobId }),
+    });
+    const data = await res.json();
+    if (data.status === 'complete' && data.questions?.length > 0) {
+      // Cache the finished questions so resumeFromBanner can show them without re-polling
+      job._completed = true;
+      job._questions = data.questions;
+      localStorage.setItem('bmt_pending_job', JSON.stringify(job));
+      setPendingBannerState('ready');
+    } else if (data.status === 'failed') {
+      setPendingBannerState('failed');
+    } else {
+      setPendingBannerState('generating');
+    }
+  } catch(e) {
+    // Network hiccup — leave banner in generating state
+    setPendingBannerState('generating');
+  }
+}
+
+function setPendingBannerState(state) {
+  const icon = document.getElementById('pending-job-icon');
+  const text = document.getElementById('pending-job-text');
+  const btn  = document.getElementById('pending-job-btn');
+  const banner = document.getElementById('pending-job-banner');
+  if (!icon || !text || !btn || !banner) return;
+  if (state === 'ready') {
+    banner.style.background = 'var(--green-light)';
+    banner.style.border = '1px solid var(--green)';
+    icon.textContent = '✅';
+    text.innerHTML = '<strong style="color:var(--oxford)">Your tutorial is ready!</strong> Review the questions and save it.';
+    btn.textContent = 'Review & save →';
+  } else if (state === 'failed') {
+    banner.style.background = 'var(--red-light)';
+    banner.style.border = '1px solid var(--red)';
+    icon.textContent = '⚠️';
+    text.innerHTML = '<strong style="color:var(--oxford)">Generation failed.</strong> Open to try again.';
+    btn.textContent = 'Open →';
+  } else {
+    banner.style.background = '#FFF8E1';
+    banner.style.border = '1px solid var(--gold)';
+    icon.textContent = '⏳';
+    text.innerHTML = '<strong style="color:var(--oxford)">A tutorial is still generating…</strong> You can keep using the app — we\'ll keep working on it.';
+    btn.textContent = 'View progress →';
+  }
+}
+
+function dismissPendingJob() {
+  // Dismiss = abandon this pending tutorial. Confirm first so it isn't lost by accident.
+  const banner = document.getElementById('pending-job-banner');
+  if (!confirm('Discard this tutorial? If it is still generating or unsaved, you will lose it and can set a new one.')) return;
+  localStorage.removeItem('bmt_pending_job');
+  if (banner) banner.classList.add('hidden');
+  logAgent('orchestrator', 'Pending tutorial dismissed by parent', 'warn');
+}
+
+// CR-007: Re-enter the wizard from the dashboard banner and resume the job.
+function resumeFromBanner() {
+  const raw = localStorage.getItem('bmt_pending_job');
+  if (!raw) { showToast('No pending tutorial found', 'warn'); return; }
+  let job;
+  try { job = JSON.parse(raw); } catch(e) { localStorage.removeItem('bmt_pending_job'); return; }
+
+  // Restore wizard state
+  S._lastJobId = job.jobId;
+  S.subject = job.subject; S.year = job.year; S.topics = job.topics;
+  S.difficulty = job.difficulty; S.questionCount = job.count;
+  S.assignedChildId = job.childId;
+  S.previewIndex = 0; S_flagged = new Set();
+
+  updateWizardProgress(4);
+  showWizStep(4);
+  showScreen('screen-wizard');
+
+  // Render context chips
+  const ctxEl = document.getElementById('gen-context');
+  if (ctxEl) {
+    const child = S.children.find(c => c.id === job.childId);
+    const childName = child ? child.name : 'Unassigned';
+    const subjectLabel = job.subject.charAt(0).toUpperCase() + job.subject.slice(1);
+    ctxEl.innerHTML = `<span style="background:var(--oxford);color:white;padding:2px 10px;border-radius:6px;">${childName}</span>`
+      + `<span style="background:var(--cambridge-light);color:var(--oxford);padding:2px 10px;border-radius:6px;">Year ${job.year} ${subjectLabel}</span>`
+      + job.topics.map(t => `<span style="background:var(--bg);border:1px solid var(--border);padding:2px 10px;border-radius:6px;">${t}</span>`).join('');
+  }
+
+  // If checkPendingJob already cached completed questions, show them directly
+  if (job._completed && job._questions?.length > 0) {
+    S.generatedQuestions = job._questions;
+    document.getElementById('gen-loading').classList.add('hidden');
+    document.getElementById('gen-preview').classList.remove('hidden');
+    document.getElementById('gen-actions').classList.remove('hidden');
+    document.getElementById('gen-status-text').textContent = `${job._questions.length} questions ready (✨ AI-generated) — review them below, then confirm.`;
+    renderPreview();
+    logAgent('orchestrator', 'Resumed completed job from banner', 'ok');
+    return;
+  }
+
+  // Otherwise resume polling
+  S.generatedQuestions = [];
+  document.getElementById('gen-loading').classList.remove('hidden');
+  document.getElementById('gen-preview').classList.add('hidden');
+  document.getElementById('gen-actions').classList.add('hidden');
+  document.getElementById('gen-status-text').textContent = 'Resuming generation...';
+  document.getElementById('gen-loading-msg').textContent = 'Checking for your questions...';
+  logAgent('orchestrator', `Resuming job from banner: ${job.jobId}`, 'ok');
+  resumePendingJob(job.jobId);
 }
 
 function renderChildCards() {
@@ -3522,7 +3671,13 @@ async function callEdgeFunction() {
 
       if (pollData.status === 'complete') {
         logAgent('designer', `Job complete: ${pollData.count} questions — ${pollData.bankSupplied || 0} from bank`, 'ok');
-        localStorage.removeItem('bmt_pending_job');
+        // CR-007: keep job marked complete so the dashboard banner survives if the
+        // parent leaves the wizard before saving. confirmSave clears it on save.
+        try {
+          const j = JSON.parse(localStorage.getItem('bmt_pending_job') || '{}');
+          j._completed = true; j._questions = pollData.questions;
+          localStorage.setItem('bmt_pending_job', JSON.stringify(j));
+        } catch(e) {}
         return pollData.questions;
       }
 
@@ -3603,7 +3758,13 @@ async function resumePendingJob(jobId) {
       });
       const data = await res.json();
       if (data.status === 'complete' && data.questions?.length > 0) {
-        localStorage.removeItem('bmt_pending_job');
+        // CR-007: keep job in storage (marked complete) so the banner survives
+        // if the parent navigates away again before saving. Only confirmSave clears it.
+        try {
+          const j = JSON.parse(localStorage.getItem('bmt_pending_job') || '{}');
+          j._completed = true; j._questions = data.questions;
+          localStorage.setItem('bmt_pending_job', JSON.stringify(j));
+        } catch(e) {}
         S.generatedQuestions = data.questions;
         S.previewIndex = 0;
         document.getElementById('gen-loading').classList.add('hidden');
@@ -3987,6 +4148,7 @@ async function confirmSave() {
     };
     await supabase.from('tutorials').insert(rec, session.token);
     await loadParentData();
+    localStorage.removeItem('bmt_pending_job'); // CR-007: tutorial saved — clear pending job
     logAgent('orchestrator', `Tutorial saved: ${finalQuestions.length} questions ✓`, 'ok');
     logAgent('reviewer', 'Tutorial meets curriculum and difficulty requirements ✓', 'ok');
     showToast(`Tutorial saved — ${finalQuestions.length} question${finalQuestions.length>1?'s':''} assigned ✓`, 'success');
