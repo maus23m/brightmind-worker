@@ -2,12 +2,16 @@
 // Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams (Claude SVG) → Audit → Child Agent → Bank Write
 // Prompts loaded from /prompts/ directory — edit prompts without code changes.
 // DEF-033 fix: questions requiring diagrams are dropped if diagram generation fails (not served diagramless)
+// DEF-040 fix: diagram stage routed to a dedicated (stronger) model — diagram quality was a model gap,
+//              not a prompt gap. Question generation stays on the default model; diagrams use DIAGRAM_MODEL.
 
 const fs = require("fs");
 const path = require("path");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
+// DEF-040: diagrams need a stronger model than text generation. Default to Opus 4.7.
+const DIAGRAM_MODEL = process.env.DIAGRAM_MODEL || "claude-opus-4-7";
 
 // ── Prompt Loader ──
 
@@ -45,12 +49,13 @@ function dedup(qs) {
   });
 }
 
-async function callClaude(apiKey, messages, maxTokens = 8000, system = null) {
+// callClaude — `model` param lets a stage override the default model (DEF-040).
+async function callClaude(apiKey, messages, maxTokens = 8000, system = null, model = MODEL) {
   const msgs = typeof messages === "string"
     ? [{ role: "user", content: messages }]
     : messages;
 
-  const body = { model: MODEL, max_tokens: maxTokens, messages: msgs };
+  const body = { model, max_tokens: maxTokens, messages: msgs };
   if (system) body.system = system;
 
   const res = await fetch(CLAUDE_API, {
@@ -231,6 +236,7 @@ function verify(qs, subj) {
 }
 
 // ── Stage 3: Claude SVG Diagram Generation ──
+// DEF-040: this stage runs on DIAGRAM_MODEL (Opus), not the default text model.
 
 async function drawDiagram(apiKey, question, yr, subj) {
   const diagramDesc = question.diagramPrompt || `Draw a diagram for this Year ${yr} ${subj} question: "${question.q}"`;
@@ -242,9 +248,9 @@ async function drawDiagram(apiKey, question, yr, subj) {
 
   const systemPrompt = loadPrompt("diagram_system");
 
-  console.log(`[Diagram] Prompt: ${diagramDesc.slice(0, 500)}`);
+  console.log(`[Diagram] Model: ${DIAGRAM_MODEL} | Prompt: ${diagramDesc.slice(0, 500)}`);
 
-  const raw = await callClaude(apiKey, prompt, 16000, systemPrompt);
+  const raw = await callClaude(apiKey, prompt, 16000, systemPrompt, DIAGRAM_MODEL);
   const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/i);
   if (!svgMatch) {
     console.error(`[Diagram] No SVG found in response. Raw (first 500 chars): ${raw.slice(0, 500)}`);
@@ -417,7 +423,7 @@ functions.http("worker", async (req, res) => {
     await updateJob(url, key, jobId, { status: "processing", started_at: new Date().toISOString() });
 
     const { subject, year_group: yr, topics, difficulty, question_count: count, child_id: childId, previous_ids: previousIds } = job;
-    console.log(`[Job ${jobId}] Starting: ${subject} Y${yr} ${topics.join(",")} ${difficulty} x${count}`);
+    console.log(`[Job ${jobId}] Starting: ${subject} Y${yr} ${topics.join(",")} ${difficulty} x${count} | text=${MODEL} diagram=${DIAGRAM_MODEL}`);
 
     // Stage 0: Bank
     let seen = new Set(), recent = [];
