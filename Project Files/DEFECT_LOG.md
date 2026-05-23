@@ -1,6 +1,6 @@
 # BrightMind Defect Log
 
-Last updated: 21 May 2026
+Last updated: 23 May 2026
 
 ## Resolved
 
@@ -38,6 +38,7 @@ Last updated: 21 May 2026
 | DEF-030 | Cross-parent data leak — permissive RLS policies | CRITICAL | ✅ RESOLVED (V2 auth model) |
 | DEF-031 | Wrong-child data leak within same family | CRITICAL | ✅ RESOLVED (V2 auth model) |
 | DEF-032 | Diagram max_tokens was 4096 causing complex SVGs to fail silently — raised to 16000 | MAJOR | ✅ RESOLVED |
+| DEF-039 | Diagram system prompt over-simplified. The full rule set in `diagram_system.txt` was stripped to a minimal version on the mistaken theory that the rules were degrading geometric accuracy. This was a misdiagnosis (see DEF-040). The simplification removed genuine safeguards (answer-leak whitelist enforcement, label-overlap rules). Fix: reverted `diagram_system.txt` to the full-rules version. Deployed 23 May 2026. | MAJOR | ✅ RESOLVED (DEPLOYED) |
 
 ## Open / In Progress
 
@@ -49,3 +50,4 @@ Last updated: 21 May 2026
 | DEF-036 | All banked questions tagged with first topic only. q._topic never set during generation. bankWrite defaults to topics[0]. | MINOR | OPEN | Curriculum |
 | DEF-037 | DIAGRAM_MAX_TOKENS env var not used. Code uses hardcoded 16000. | MINOR | OPEN | Orchestrator |
 | DEF-038 | Nutrition & Digestion diagram example is decorative — labels organs but contains no question-specific data. Child cannot derive answer from diagram alone. Needs rewriting with measurable data. Same pattern may affect Cells example. | MEDIUM | OPEN | Designer |
+| DEF-040 | Diagram quality gap caused by model mismatch, not prompt. The pipeline diagram stage ran on Sonnet 4 (`claude-sonnet-4-20250514`) while the test "Diagram Engine" ran on a stronger model (Opus). The two were never a controlled comparison — model was an unlogged variable, so repeated diagram defects were wrongly attributed to prompt quality. Fix: dedicated `DIAGRAM_MODEL` env var (default `claude-opus-4-7`) used only for the diagram stage; question generation, audit and child agent stay on the default model. Model string now logged on every diagram call and at job start so it can never again be an invisible variable. Deployed 23 May 2026 — Cloud Run logs confirm diagram stage running on `claude-opus-4-7`. Awaiting comprehensive visual quality check before final close. Lesson: when comparing pipeline output against a test harness, log the model on both sides. | MAJOR | DEPLOYED — awaiting visual QA | Designer |
