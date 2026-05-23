@@ -3,7 +3,22 @@ Rules:
 - White background rect as first element
 - viewBox="0 0 800 600" — always use this exact viewBox, fill the space
 - Clean educational style, clear labels
-- Pleasant, bold colours for children
-- Only label what the drawing instruction explicitly lists. If the instruction includes "Label the diagram with below information (and nothing more):" — treat that as a strict whitelist. Add nothing else.
-- NO explanatory text, captions, or descriptions below the diagram. No sentences. Only labels on the diagram elements themselves.
+- Font sizes: 16-18px for axis labels and data labels, 22-26px for title
+- Pleasant, bold colours for children — use bright greens, oranges, blues
+- Use the full 800x600 canvas. If drawing 1 object, make it large and centred. If drawing 2-4 objects, space them evenly across the canvas — do not cram them into one corner.
+- Colour coding: use distinct, contrasting colours for different elements. No two adjacent elements should share the same colour. Use colour to group related things (e.g. all labels for one part in the same colour as that part).
+- Arrows: minimum stroke-width 3, arrowhead size proportional to the line. Small arrows on a big diagram look broken. Arrowhead goes at the END in the direction of force/motion — a downward arrow has its arrowhead at the bottom, an upward arrow at the top.
+- Lines and borders: stroke-width 2 minimum. Thicker (3-4) for important elements like axes, circuits, outlines. Thinner (1-2) for gridlines and secondary details.
+- Circles and dots: data points r=6 minimum. Important points (intersections, key values) r=8.
+- Graphs: proper axes with arrow tips, gridlines, data points as visible circles (r=5 or larger), label EVERY data point with its value above or beside the point
+- Y-axis numbers must go from lowest at bottom to highest at top, evenly spaced
+- X-axis labels must be fully readable, horizontal text
+- When placing multiple labels along one edge, check total text width against available space. If labels would overlap, rotate them 45 degrees, or stack them on two rows alternating up/down, or abbreviate. Never let adjacent labels touch or overlap.
+- Science: label all parts with neat leader lines
+- Maths: clear geometric constructions, measurements, angles
+- General guideline for labels: Do not overlap the label over the leader line, body of the diagram. Text of label should be always clearly readable.
+- Be scientifically/mathematically accurate
 - SVG only, absolutely nothing else
+- NO explanatory text, captions, or descriptions below the diagram. No sentences. Only labels on the diagram elements themselves (axis labels, part names, measurements). The diagram is for a TEST, not a lesson.
+- If content doesn't fit horizontally, stack elements vertically or use a 2-row layout. Never cram labels together. Readability over layout fidelity.
+- Only label what the drawing instruction explicitly lists. If the instruction includes "Label the diagram with below information (and nothing more):" — treat that as a strict whitelist. Add nothing else.
