@@ -1,9 +1,15 @@
 // BrightMind V2 — GCP Cloud Function Worker
-// Pipeline: Bank → Generate (text only) → Verify → Draw Diagrams (Claude SVG) → Audit → Child Agent → Bank Write
+// Pipeline: Bank → Generate (text only) → Compute Engine → Draw Diagrams (Claude SVG) → Audit → Child Agent → Bank Write
 // Prompts loaded from /prompts/ directory — edit prompts without code changes.
 // DEF-033 fix: questions requiring diagrams are dropped if diagram generation fails (not served diagramless)
 // DEF-040 fix: diagram stage routed to a dedicated (stronger) model — diagram quality was a model gap,
 //              not a prompt gap. Question generation stays on the default model; diagrams use DIAGRAM_MODEL.
+// DEF-041 fix: Stage 2 is now a deterministic Compute Engine. The old verify() trusted the
+//              explanation's arithmetic and overwrote c to match it — cementing generator errors.
+//              The engine recomputes the answer from compute.inputs ALONE (never reads c or e),
+//              then confirms/corrects c, or REJECTS the question. Fail-closed: a question tagged
+//              verify:"arithmetic" with a missing/invalid/unknown compute block is rejected, not
+//              waved through. Rejected questions flow into the existing top-up.
 
 const fs = require("fs");
 const path = require("path");
@@ -208,32 +214,21 @@ async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections
       e: q.e || `Option ${q.c + 1}.`,
       needsDiagram: !!q.needsDiagram,
       diagramPrompt: q.diagramPrompt || null,
+      // DEF-041: routing tag + structured working. Defaults keep legacy/non-numeric
+      // questions on the "none" track (untouched by the compute engine).
+      verify: (q.verify === "arithmetic" || q.verify === "equation_balance") ? q.verify : "none",
+      compute: (q.compute && typeof q.compute === "object") ? q.compute : null,
     }));
 }
 
-// ── Stage 2: Deterministic Verifier (maths only) ──
-
-function verify(qs, subj) {
-  if (subj !== "maths") return qs;
-  return qs.map((q) => {
-    try {
-      const e = q.e || "";
-      const pm = e.match(/=\s*([-]?\d+\.?\d*)/);
-      if (!pm) return q;
-      const ans = parseFloat(pm[1]);
-      if (!isFinite(ans)) return q;
-      const opts = q.o.map((o) => {
-        const v = parseFloat(o.replace(/[^0-9.-]/g, ""));
-        return isFinite(v) ? v : null;
-      });
-      const match = opts.findIndex((v) => v !== null && Math.abs(v - ans) < 0.05);
-      if (match >= 0 && match !== q.c) return { ...q, c: match };
-      return q;
-    } catch (e) {
-      return q;
-    }
-  });
-}
+// ── Stage 2: Compute Engine (DEF-041) ──
+// Deterministic answer verifier. Lives in its own module (compute.js) so it is
+// independently unit-testable (see compute.test.js). It recomputes the answer
+// from compute.inputs ALONE — never reads the model's c or e — then confirms c,
+// corrects c to the VERIFIED value, or rejects the question (fail-closed).
+// Only questions tagged verify:"arithmetic" are checked; verify:"equation_balance"
+// and verify:"none" pass through untouched (correctness owned by the audit agent).
+const { computeVerify: verify } = require("./compute");
 
 // ── Stage 3: Claude SVG Diagram Generation ──
 // DEF-040: this stage runs on DIAGRAM_MODEL (Opus), not the default text model.
@@ -307,7 +302,13 @@ async function audit(apiKey, qs, yr, subj) {
       subject: subj,
       age_low: String(yr + 4),
       age_high: String(yr + 5),
-      questions_json: JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, c: q.c, e: q.e, hasDiagram: !!q.svg }))),
+      // DEF-041: tell the auditor which questions the compute engine already verified,
+      // so criterion 4 does not re-judge arithmetic it is unreliable at.
+      questions_json: JSON.stringify(qs.map((q, i) => ({
+        i, q: q.q, o: q.o, c: q.c, e: q.e,
+        hasDiagram: !!q.svg,
+        computeVerified: !!(q._computeVerified || q._computeCorrected),
+      }))),
     });
 
     const raw = await callClaude(apiKey, prompt, 2000);
@@ -318,7 +319,14 @@ async function audit(apiKey, qs, yr, subj) {
       if (!r) return q;
       if (r.pass) return q;
       if (r.rewrite && r.rewrite.q && Array.isArray(r.rewrite.o) && r.rewrite.o.length === 4 && typeof r.rewrite.c === "number") {
-        return { ...r.rewrite, e: r.rewrite.e || q.e, ...(q.svg ? { svg: q.svg } : {}), _auditRewritten: true };
+        // DEF-041 guard: never let an audit rewrite silently override a
+        // compute-verified answer index. If the engine verified c, keep c.
+        const rw = { ...r.rewrite, e: r.rewrite.e || q.e, ...(q.svg ? { svg: q.svg } : {}), _auditRewritten: true };
+        if ((q._computeVerified || q._computeCorrected) && rw.c !== q.c) {
+          rw.c = q.c;
+          rw._auditCFixedToCompute = true;
+        }
+        return rw;
       }
       return { ...q, _auditFailed: true, _auditReason: r.reason || "failed" };
     });
@@ -359,7 +367,9 @@ async function childAgent(apiKey, qs, yr, subj) {
 // ── Stage 6: Bank Write ──
 
 async function bankWrite(url, key, qs, subj, yr, topics, diff) {
-  const store = qs.filter((q) => !q._fromBank && !q._auditFailed && !q._childFailed && q.q);
+  // _computeFailed questions are filtered out before this stage, but the guard is
+  // kept here as defence-in-depth — a compute-rejected question must never be banked.
+  const store = qs.filter((q) => !q._fromBank && !q._auditFailed && !q._childFailed && !q._computeFailed && q.q);
   if (!store.length) return;
   const rows = store.map((q) => ({
     subject: subj, year_group: yr, topic: q._topic || topics[0], difficulty: diff,
@@ -439,7 +449,7 @@ functions.http("worker", async (req, res) => {
       return;
     }
 
-    // Stage 1: Generate (text only, with diagramPrompt where needed)
+    // Stage 1: Generate (text only, with diagramPrompt + verify/compute where needed)
     const excl = [...recent, ...bq.map((q) => q.q?.trim().slice(0, 80)).filter(Boolean)];
     const rejections = await getRecentRejections(url, key, subject, yr);
     if (rejections.length) console.log(`[Job ${jobId}] Loaded ${rejections.length} parent rejections for feedback`);
@@ -447,9 +457,15 @@ functions.http("worker", async (req, res) => {
     if (seen.size) generated = generated.filter((q) => !seen.has(qh(q.q)));
     console.log(`[Job ${jobId}] Stage 1: Generated ${generated.length} (${generated.filter(q => q.needsDiagram).length} need diagrams)`);
 
-    // Stage 2: Verify
-    const verified = verify(generated, subject);
-    console.log(`[Job ${jobId}] Stage 2: Verified ${verified.length}`);
+    // Stage 2: Compute Engine — reject questions whose answer fails verification (DEF-041)
+    const verifiedAll = verify(generated, subject);
+    const verified = verifiedAll.filter((q) => !q._computeFailed);
+    const computeRejected = verifiedAll.length - verified.length;
+    if (computeRejected) {
+      verifiedAll.filter((q) => q._computeFailed).forEach((q) =>
+        console.error(`[Job ${jobId}] Compute REJECT: "${q.q?.slice(0, 80)}" — ${q._computeReason}`));
+    }
+    console.log(`[Job ${jobId}] Stage 2: Compute ${verified.length}/${verifiedAll.length} verified (${computeRejected} rejected, ${verified.filter(q => q._computeCorrected).length} c-corrected)`);
 
     // Stage 3: Claude SVG Diagrams
     const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
@@ -476,7 +492,8 @@ functions.http("worker", async (req, res) => {
       try {
         const topupExcl = [...excl, ...final.map((q) => q.q?.slice(0, 80)).filter(Boolean)];
         const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl);
-        const topupVerified = verify(topup, subject);
+        // DEF-041: top-up questions go through the compute engine too — reject failures.
+        const topupVerified = verify(topup, subject).filter((q) => !q._computeFailed);
         const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject);
         const es = new Set(final.map((q) => q.q?.trim().toLowerCase().slice(0, 80)));
         const fresh = dedup(topupWithDiagrams).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
