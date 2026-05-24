@@ -10,6 +10,51 @@ PRINCIPLES:
 - Each question: under 60 words. Each explanation: under 25 words. 4 options, exactly 1 correct.
 - Simple, clear instructions with worked examples produce the best output. Show, don't describe. Every diagram type needs one complete example. No technical formatting rules — just tell the drawing agent what to draw like you're talking to a child that needs to draw it.
 
+ANSWER VERIFICATION — READ CAREFULLY:
+Every question you produce will be checked by an automatic verifier before it reaches a child. To make that possible, every question MUST include a "verify" field that says how its answer can be checked. There are three values:
+
+1. "arithmetic" — the answer is a single number worked out by a calculation on given numbers. This covers maths (range, mean, median, mode, totals, differences, percentages, fractions of a quantity) AND calculable science (speed, density, force as mass×something, simple totals). When verify is "arithmetic" you MUST also include a "compute" object: {"op": "<operation>", "inputs": [<the raw numbers>]}.
+   The verifier will redo the calculation itself from inputs. So inputs must be the ACTUAL numbers from your question, and op must be the operation that produces the correct answer.
+   Allowed op values and what inputs means for each:
+     - "sum"        inputs = all the numbers to add
+     - "product"    inputs = all the numbers to multiply
+     - "count"      inputs = the list of items being counted
+     - "min"        inputs = the list; answer is the smallest
+     - "max"        inputs = the list; answer is the largest
+     - "range"      inputs = the list; answer is largest minus smallest
+     - "difference" inputs = exactly two numbers; answer is the positive gap
+     - "mean"       inputs = the list; answer is the average
+     - "median"     inputs = the list; answer is the middle value
+     - "mode"       inputs = the list; answer is the most common value (do NOT use mode if two values tie)
+     - "percent_of"  inputs = exactly two numbers [part, whole]; answer is part as a % of whole
+     - "fraction_of" inputs = exactly two numbers [whole, fraction]; answer is whole × fraction
+
+2. "equation_balance" — a chemistry question asking to balance an equation. Use this value, but you do not need a compute object yet.
+
+3. "none" — the answer is a fact or a reasoning judgement, not a calculation. This covers all biology, conceptual chemistry and physics, geometry-reasoning questions, definitions, and "which of these..." questions. No compute object needed.
+
+RULES FOR "arithmetic" QUESTIONS:
+- The numbers in "inputs" must be exactly the numbers stated in your question text. Do not round, reorder for effect, or leave any out.
+- One of your 4 options MUST equal the result of op(inputs). The verifier rejects the whole question if it does not.
+- "c" must point at that correct option. But do not rely on getting c right by hand — the verifier recomputes and will correct or reject. Your job is to make inputs and op honest.
+- The explanation "e" must match the same calculation.
+- If a maths question genuinely is not a calculation (e.g. "which shape has a line of symmetry?"), use verify "none". Do not force a compute object onto it.
+
+WORKED EXAMPLE — arithmetic (maths):
+Question: "A shop records daily customers: Mon 45, Tue 38, Wed 52, Thu 41, Fri 64, Sat 78, Sun 56. What is the range?"
+The range is 78 (largest) minus 38 (smallest) = 40.
+{"q":"A shop records daily customers: Mon 45, Tue 38, Wed 52, Thu 41, Fri 64, Sat 78, Sun 56. What is the range?","o":["33","40","45","78"],"c":1,"e":"Range = highest - lowest = 78 - 38 = 40.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"range","inputs":[45,38,52,41,64,78,56]}}
+
+WORKED EXAMPLE — arithmetic (calculable science):
+Question: "A car travels 120 metres in 8 seconds. What is its average speed?"
+Speed = distance ÷ ... — expressed as a division this is not a listed op, so phrase the data so a listed op fits, OR use verify "none" if no op fits. Here, average speed = 120 ÷ 8 = 15. There is no "divide" op, so this question should use verify "none" and rely on the audit agent. Only use "arithmetic" when one of the listed ops genuinely produces the answer.
+
+WORKED EXAMPLE — none (science fact):
+{"q":"Which gas do plants release during photosynthesis?","o":["Carbon dioxide","Oxygen","Nitrogen","Hydrogen"],"c":1,"e":"Plants release oxygen as a by-product of photosynthesis.","needsDiagram":false,"diagramPrompt":null,"verify":"none"}
+
+WORKED EXAMPLE — none (maths reasoning):
+{"q":"Which of these shapes has exactly one line of symmetry?","o":["Square","Equilateral triangle","Isosceles triangle","Circle"],"c":2,"e":"An isosceles triangle has exactly one line of symmetry.","needsDiagram":false,"diagramPrompt":null,"verify":"none"}
+
 For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
 
 When needsDiagram is true, also provide diagramPrompt: tell the image generator what to draw in plain conversational language — like you're explaining to a person what to draw. Include all the data they need.
@@ -163,5 +208,5 @@ BAD diagramPrompt:
 Keep diagrams simple and focused. One chart, one shape, one scene. Not four things side by side.
 {{rejections}}{{exclusions}}
 
-Return ONLY a JSON array, no markdown, no backticks:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist..."}]
+Return ONLY a JSON array, no markdown, no backticks. Every object MUST include the "verify" field. Objects with verify "arithmetic" MUST include the "compute" object:
+[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist...","verify":"arithmetic","compute":{"op":"range","inputs":[1,2,3]}}]
