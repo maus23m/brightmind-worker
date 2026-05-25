@@ -1,0 +1,105 @@
+// BrightMind V2 — Tester: final-payload manifest (DEF-042)
+// Run: node manifest.test.js
+//
+// DEF-042: GCP worker logs showed different questions than the app preview.
+// Cause: per-stage log lines are printed mid-pipeline; audit REWRITES, dedup
+// REORDERS and top-up APPENDS afterwards. buildFinalManifest must reflect the
+// EXACT cleanQuestions payload — the same array the app receives.
+
+const { buildFinalManifest } = require("./manifest");
+
+let pass = 0, fail = 0;
+function check(name, cond) {
+  if (cond) { pass++; console.log(`  ok  ${name}`); }
+  else { fail++; console.log(`FAIL  ${name}`); }
+}
+
+// ── Happy path: manifest line count equals payload length ──
+{
+  const clean = [
+    { q: "What is 2+2?", o: ["3", "4", "5", "6"], c: 1, e: "4" },
+    { q: "What is 5-1?", o: ["2", "3", "4", "5"], c: 2, e: "4" },
+  ];
+  const lines = buildFinalManifest("JOB1", clean);
+  check("one log line per question", lines.length === clean.length);
+  check("Q1 text present in manifest", lines[0].includes("What is 2+2?"));
+  check("Q2 text present in manifest", lines[1].includes("What is 5-1?"));
+}
+
+// ── DEF-042 regression: audit REWRITE — manifest must show rewritten text ──
+// The pipeline logs the ORIGINAL question at Stage 2/3; audit then rewrites it.
+// cleanQuestions carries the rewritten text — the manifest must match THAT.
+{
+  const original = { q: "ORIGINAL question (logged at Stage 2)", o: ["a","b","c","d"], c: 0 };
+  // simulate audit rewrite -> a fresh object replaces it in `final`
+  const rewritten = { q: "REWRITTEN by audit agent", o: ["w","x","y","z"], c: 3, _auditRewritten: true };
+  const cleanAfterAudit = [{ q: rewritten.q, o: rewritten.o, c: rewritten.c, e: rewritten.e }];
+  const lines = buildFinalManifest("JOB2", cleanAfterAudit);
+  check("DEF-042: manifest shows REWRITTEN text, not original",
+    lines[0].includes("REWRITTEN by audit agent") && !lines[0].includes("ORIGINAL"));
+  void original;
+}
+
+// ── DEF-042 regression: dedup REORDER — bank questions prepended ──
+// final = dedup([...bq, ...childPassed]) — order differs from generation order.
+// Manifest indices must follow the FINAL order, not generation order.
+{
+  const clean = [
+    { q: "BANK question (prepended)", o: ["a","b","c","d"], c: 0, _fromBank: true },
+    { q: "GENERATED question", o: ["a","b","c","d"], c: 1 },
+  ];
+  const lines = buildFinalManifest("JOB3", clean);
+  check("DEF-042: Q1 is the bank question (final order honoured)",
+    lines[0].includes("Q1") && lines[0].includes("BANK question"));
+  check("DEF-042: bank tag shown", lines[0].includes("[bank]"));
+  check("DEF-042: generated question not tagged bank", !lines[1].includes("[bank]"));
+}
+
+// ── DEF-042 regression: top-up APPEND — appended questions appear in manifest ──
+// Top-up questions are added to `final` AFTER every Stage 4/5 log line. They
+// must still appear in the manifest (previously absent from all logs).
+{
+  const clean = [
+    { q: "Original generated Q", o: ["a","b","c","d"], c: 0 },
+    { q: "TOP-UP question appended after Stage 5", o: ["a","b","c","d"], c: 2 },
+  ];
+  const lines = buildFinalManifest("JOB4", clean);
+  check("DEF-042: top-up question present in manifest",
+    lines.some((l) => l.includes("TOP-UP question appended")));
+  check("DEF-042: manifest count includes top-up", lines.length === 2);
+}
+
+// ── Answer index resolved to the actual option text ──
+{
+  const clean = [{ q: "Range of {5,9,2}?", o: ["3", "7", "9", "11"], c: 1 }];
+  const lines = buildFinalManifest("JOB5", clean);
+  check("answer text resolved from c index", lines[0].includes('"7"'));
+  check("c index shown", lines[0].includes("c=1"));
+}
+
+// ── Unhappy path: svg flag shown ──
+{
+  const clean = [{ q: "Diagram Q", o: ["a","b","c","d"], c: 0, svg: "<svg></svg>" }];
+  const lines = buildFinalManifest("JOB6", clean);
+  check("svg-bearing question tagged [+svg]", lines[0].includes("[+svg]"));
+}
+
+// ── Unhappy path: empty payload — no crash, empty manifest ──
+{
+  const lines = buildFinalManifest("JOB7", []);
+  check("empty payload -> empty manifest, no throw", Array.isArray(lines) && lines.length === 0);
+}
+
+// ── Unhappy path: malformed question (missing o / c) — no crash ──
+{
+  let threw = false, lines = [];
+  try {
+    lines = buildFinalManifest("JOB8", [{ q: "broken question, no options" }]);
+  } catch (e) { threw = true; }
+  check("malformed question does not throw", !threw);
+  check("malformed question still produces a line with '?' answer",
+    lines[0] && lines[0].includes('"?"'));
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
