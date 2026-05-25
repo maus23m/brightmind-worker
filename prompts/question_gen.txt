@@ -40,10 +40,32 @@ RULES FOR "arithmetic" QUESTIONS:
 - The explanation "e" must match the same calculation.
 - If a maths question genuinely is not a calculation (e.g. "which shape has a line of symmetry?"), use verify "none". Do not force a compute object onto it.
 
-WORKED EXAMPLE — arithmetic (maths):
+WORKED EXAMPLE — arithmetic (maths). NOTE: this is a CALCULATION question — the
+child is asked to COMPUTE a number, so the data is stated in the question TEXT so
+the verifier can check it. This is NOT the template for every data question — see
+the "read-from-graph" example below for data questions where the child READS a
+value, not computes one.
 Question: "A shop records daily customers: Mon 45, Tue 38, Wed 52, Thu 41, Fri 64, Sat 78, Sun 56. What is the range?"
 The range is 78 (largest) minus 38 (smallest) = 40.
 {"q":"A shop records daily customers: Mon 45, Tue 38, Wed 52, Thu 41, Fri 64, Sat 78, Sun 56. What is the range?","o":["33","40","45","78"],"c":1,"e":"Range = highest - lowest = 78 - 38 = 40.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"range","inputs":[45,38,52,41,64,78,56]}}
+
+TWO SHAPES OF DATA QUESTION — choose deliberately:
+- CALCULATION question: the child computes a number (range, mean, median, mode,
+  total, difference, %). Data goes in the question TEXT. verify "arithmetic" with
+  a compute block. needsDiagram is false. (Example above.)
+- READ-FROM-GRAPH question: the child reads or interprets a value from a chart
+  (which bar is tallest? what was the value in Week 3? which week had the biggest
+  rise?). The data goes in the CHART, not the text — the question text must NOT
+  list the numbers, or the chart is pointless. verify "none". needsDiagram is true
+  with a full diagramPrompt. For Charts & Graphs, Statistics, Data & Graphs and any
+  topic about reading charts, this is the DEFAULT shape — most questions should be
+  read-from-graph, not text-only calculation.
+
+WORKED EXAMPLE — none (read-from-graph statistics, needsDiagram TRUE):
+{"q":"The bar chart shows books read by Class 7B over four weeks. In which week did they read the most books?","o":["Week 1","Week 2","Week 3","Week 4"],"c":2,"e":"Week 3's bar is the tallest, so the most books were read then.","needsDiagram":true,"diagramPrompt":"Draw a bar chart titled 'Books Read by Class 7B'. The vertical axis goes from 0 to 20 labelled 'Number of Books'. The horizontal axis has four bars: Week 1, Week 2, Week 3, Week 4. Week 1 bar reaches 9, Week 2 reaches 12, Week 3 reaches 17, Week 4 reaches 10.\nLabel the diagram with below information (and nothing more):\n1. Y-axis labelled 'Number of Books' 0 to 20 with interval of 4\n2. X-axis labelled Week 1, Week 2, Week 3, Week 4\n3. Bar heights: Week 1 = 9, Week 2 = 12, Week 3 = 17, Week 4 = 10\n4. Title\n5. Texts should be away from drawings (proportionally away but near)\n6. No overlaps between two objects unless its legit intersection","verify":"none"}
+Note: the question text gives NO numbers — the child must read the chart. The
+chart shows the data but does not label the answer. verify is "none" because the
+answer is a reading judgement, not a calculation.
 
 WORKED EXAMPLE — arithmetic (calculable science):
 Question: "A car travels 120 metres in 8 seconds. What is its average speed?"
@@ -55,7 +77,7 @@ WORKED EXAMPLE — none (science fact):
 WORKED EXAMPLE — none (maths reasoning):
 {"q":"Which of these shapes has exactly one line of symmetry?","o":["Square","Equilateral triangle","Isosceles triangle","Circle"],"c":2,"e":"An isosceles triangle has exactly one line of symmetry.","needsDiagram":false,"diagramPrompt":null,"verify":"none"}
 
-For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms).
+For each question, indicate whether a diagram would help the student understand or answer it (needsDiagram: true/false). A diagram helps when the question involves visual data (charts, graphs, tables), spatial concepts (shapes, angles, forces, transformations), or scientific structures (cells, circuits, systems, organisms). For Charts & Graphs, Statistics, Data & Graphs and any topic whose subject IS a chart, default to needsDiagram:true with a read-from-graph question — a chart topic that produces text-only questions has failed its purpose.
 
 When needsDiagram is true, also provide diagramPrompt: tell the image generator what to draw in plain conversational language — like you're explaining to a person what to draw. Include all the data they need.
 
