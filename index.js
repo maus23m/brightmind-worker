@@ -399,6 +399,10 @@ async function record(url, key, childId, qs, subj, topics) {
   } catch (e) {}
 }
 
+// DEF-042: final-payload manifest logger. Standalone module so it is
+// independently unit-testable (see manifest.test.js).
+const { buildFinalManifest } = require("./manifest");
+
 async function updateJob(url, key, jobId, update) {
   await fetch(`${url}/rest/v1/generation_jobs?id=eq.${jobId}`, {
     method: "PATCH",
@@ -463,7 +467,7 @@ functions.http("worker", async (req, res) => {
     const computeRejected = verifiedAll.length - verified.length;
     if (computeRejected) {
       verifiedAll.filter((q) => q._computeFailed).forEach((q) =>
-        console.error(`[Job ${jobId}] Compute REJECT: "${q.q?.slice(0, 80)}" — ${q._computeReason}`));
+        console.error(`[Job ${jobId}] Stage 2 (intermediate) Compute REJECT: "${q.q?.slice(0, 80)}" — ${q._computeReason}`));
     }
     console.log(`[Job ${jobId}] Stage 2: Compute ${verified.length}/${verifiedAll.length} verified (${computeRejected} rejected, ${verified.filter(q => q._computeCorrected).length} c-corrected)`);
 
@@ -516,6 +520,13 @@ functions.http("worker", async (req, res) => {
       status: "complete", questions: cleanQuestions, source: bq.length ? "mixed" : "claude",
       bank_supplied: bq.length, completed_at: new Date().toISOString(),
     });
+
+    // DEF-042: authoritative FINAL manifest — the exact payload the app receives.
+    // Every per-stage log line above is printed mid-pipeline and is stale once a
+    // later stage rewrites (audit), reorders (dedup) or appends (top-up). This is
+    // the ONLY log line that is guaranteed to match the preview the parent sees.
+    console.log(`[Job ${jobId}] FINAL PAYLOAD (${cleanQuestions.length} questions sent to app):`);
+    buildFinalManifest(jobId, cleanQuestions).forEach((line) => console.log(line));
 
     console.log(`[Job ${jobId}] Complete: ${final.length} questions (${bq.length} bank, ${final.length - bq.length} claude, ${cleanQuestions.filter(q => q.svg).length} diagrams)`);
     res.status(200).json({ status: "complete", count: final.length });
