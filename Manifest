@@ -1,0 +1,19 @@
+// BrightMind V2 — Final-payload manifest (DEF-042)
+// Standalone module (like compute.js) so it is independently unit-testable
+// without pulling in @google-cloud/functions-framework.
+//
+// WHY THIS EXISTS: every per-stage log line in index.js is printed mid-pipeline.
+// Audit can REWRITE a question, dedup REORDERS, and top-up APPENDS — all after
+// those lines have already been logged. The GCP log therefore did not match the
+// preview the parent sees. buildFinalManifest logs the exact `cleanQuestions`
+// payload sent to the app, so the log is the single source of truth.
+
+function buildFinalManifest(jobId, cleanQuestions) {
+  return cleanQuestions.map((q, i) => {
+    const ans = (q.o && typeof q.c === "number") ? q.o[q.c] : "?";
+    return `[Job ${jobId}]   Q${i + 1} [c=${q.c} → "${ans}"]` +
+      `${q.svg ? " [+svg]" : ""}${q._fromBank ? " [bank]" : ""}: ${q.q}`;
+  });
+}
+
+module.exports = { buildFinalManifest };
