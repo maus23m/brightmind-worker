@@ -165,7 +165,7 @@ async function adaptBank(url, key, subj, yr, topics, diff, cnt, prev, seen) {
 async function getRecentRejections(url, key, subj, yr) {
   try {
     const rows = await supaFetch(url, key,
-      `question_rejections?subject=eq.${encodeURIComponent(subj)}&year_group=eq.${yr}&order=created_at.desc&limit=50&select=reason,question_text`
+      `question_rejections?subject=eq.${encodeURIComponent(subj)}&year_group=eq.${yr}&order=created_at.desc&limit=50&select=reason,note,question_text`
     );
     return rows || [];
   } catch (e) {
@@ -180,10 +180,24 @@ function buildPrompt(subj, yr, topics, diff, n, excl, rejections = []) {
 
   let rejStr = "";
   if (rejections.length > 0) {
+    // Grouped count of preset/category reasons.
     const grouped = {};
-    rejections.forEach(r => { grouped[r.reason] = (grouped[r.reason] || 0) + 1; });
-    const summary = Object.entries(grouped).map(([reason, count]) => `- ${reason} (${count}x)`).join("\n");
-    rejStr = `\nPARENT FEEDBACK — these issues were flagged by parents reviewing previous questions for this subject and year group. Avoid these problems:\n${summary}\n`;
+    rejections.forEach((r) => {
+      const reason = r.reason || "unspecified";
+      grouped[reason] = (grouped[reason] || 0) + 1;
+    });
+    const summary = Object.entries(grouped)
+      .map(([reason, count]) => `- ${reason} (${count}x)`).join("\n");
+    // Free-text notes — parent-written explanations (CR-020) and pipeline
+    // verifier reasons (CR-019). De-duplicated, capped, quoted verbatim because
+    // the specific wording is the strongest self-correction signal.
+    const notes = [...new Set(
+      rejections.map((r) => (r.note || "").trim()).filter((n) => n.length > 0)
+    )].slice(0, 12);
+    const noteStr = notes.length
+      ? `\nSpecific notes on what was wrong:\n${notes.map((n) => `- ${n}`).join("\n")}\n`
+      : "";
+    rejStr = `\nFEEDBACK — these issues were flagged on previous questions for this subject and year group (by parents reviewing them, and by automatic verification). Do NOT repeat these problems:\n${summary}\n${noteStr}`;
   }
 
   const template = loadPrompt("question_gen");
@@ -399,10 +413,6 @@ async function record(url, key, childId, qs, subj, topics) {
   } catch (e) {}
 }
 
-// DEF-042: final-payload manifest logger. Standalone module so it is
-// independently unit-testable (see manifest.test.js).
-const { buildFinalManifest } = require("./manifest");
-
 async function updateJob(url, key, jobId, update) {
   await fetch(`${url}/rest/v1/generation_jobs?id=eq.${jobId}`, {
     method: "PATCH",
@@ -467,9 +477,16 @@ functions.http("worker", async (req, res) => {
     const computeRejected = verifiedAll.length - verified.length;
     if (computeRejected) {
       verifiedAll.filter((q) => q._computeFailed).forEach((q) =>
-        console.error(`[Job ${jobId}] Stage 2 (intermediate) Compute REJECT: "${q.q?.slice(0, 80)}" — ${q._computeReason}`));
+        console.error(`[Job ${jobId}] Compute REJECT: "${q.q?.slice(0, 80)}" — ${q._computeReason}`));
     }
     console.log(`[Job ${jobId}] Stage 2: Compute ${verified.length}/${verifiedAll.length} verified (${computeRejected} rejected, ${verified.filter(q => q._computeCorrected).length} c-corrected)`);
+
+    // CR-019: collect this job's own pipeline rejections (compute/audit/child) as
+    // free-text feedback, shaped like parent rejections {reason, question_text}, so
+    // the top-up generate() call can avoid repeating the same faults.
+    const pipelineRejections = verifiedAll
+      .filter((q) => q._computeFailed)
+      .map((q) => ({ reason: "automatic verification", note: q._computeReason || "compute check failed", question_text: q.q || "" }));
 
     // Stage 3: Claude SVG Diagrams
     const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
@@ -478,11 +495,15 @@ functions.http("worker", async (req, res) => {
     // Stage 4: Audit
     const audited = await audit(apiKey, withDiagrams, yr, subject);
     const auditPassed = audited.filter((q) => !q._auditFailed);
+    audited.filter((q) => q._auditFailed).forEach((q) =>
+      pipelineRejections.push({ reason: "audit agent", note: q._auditReason || "audit failed", question_text: q.q || "" }));
     console.log(`[Job ${jobId}] Stage 4: Audit ${auditPassed.length}/${audited.length} passed`);
 
     // Stage 5: Child Agent
     const childChecked = await childAgent(apiKey, auditPassed, yr, subject);
     const childPassed = childChecked.filter((q) => !q._childFailed);
+    childChecked.filter((q) => q._childFailed).forEach((q) =>
+      pipelineRejections.push({ reason: "child agent", note: q._childReason || "child agent flagged", question_text: q.q || "" }));
     console.log(`[Job ${jobId}] Stage 5: Child Agent ${childPassed.length}/${childChecked.length} passed`);
 
     // Stage 6: Bank Write
@@ -495,7 +516,12 @@ functions.http("worker", async (req, res) => {
       console.log(`[Job ${jobId}] Top-up: need ${count - final.length} more`);
       try {
         const topupExcl = [...excl, ...final.map((q) => q.q?.slice(0, 80)).filter(Boolean)];
-        const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl);
+        // CR-019: feed this job's pipeline rejections (+ the parent rejections
+        // already loaded) into top-up so it does not repeat rejected faults.
+        const topupRejections = [...rejections, ...pipelineRejections];
+        if (pipelineRejections.length)
+          console.log(`[Job ${jobId}] Top-up: feeding back ${pipelineRejections.length} pipeline rejection reason(s)`);
+        const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl, topupRejections);
         // DEF-041: top-up questions go through the compute engine too — reject failures.
         const topupVerified = verify(topup, subject).filter((q) => !q._computeFailed);
         const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject);
@@ -520,13 +546,6 @@ functions.http("worker", async (req, res) => {
       status: "complete", questions: cleanQuestions, source: bq.length ? "mixed" : "claude",
       bank_supplied: bq.length, completed_at: new Date().toISOString(),
     });
-
-    // DEF-042: authoritative FINAL manifest — the exact payload the app receives.
-    // Every per-stage log line above is printed mid-pipeline and is stale once a
-    // later stage rewrites (audit), reorders (dedup) or appends (top-up). This is
-    // the ONLY log line that is guaranteed to match the preview the parent sees.
-    console.log(`[Job ${jobId}] FINAL PAYLOAD (${cleanQuestions.length} questions sent to app):`);
-    buildFinalManifest(jobId, cleanQuestions).forEach((line) => console.log(line));
 
     console.log(`[Job ${jobId}] Complete: ${final.length} questions (${bq.length} bank, ${final.length - bq.length} claude, ${cleanQuestions.filter(q => q.svg).length} diagrams)`);
     res.status(200).json({ status: "complete", count: final.length });
