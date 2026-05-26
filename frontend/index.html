@@ -893,11 +893,17 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
       </div>
 
       <!-- Results history with per-question breakdown -->
-      <div class="card" style="margin-top:20px;">
+      <div class="card" style="margin-top:20px;" id="results-history-card">
         <div class="card-title">📋 Test Results History</div>
         <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">Tap any result to see the full question and answer breakdown.</p>
+        <!-- CR-013/014: filter banner shown when a topic tile or calendar date is clicked -->
+        <div id="results-filter-banner" class="hidden" style="background:#EFF5FF;border:1px solid var(--cambridge);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <span style="font-size:13px;font-weight:700;color:var(--oxford);" id="results-filter-label"></span>
+          <button class="btn btn-secondary btn-xs" onclick="clearResultsFilter()">✕ Clear filter</button>
+        </div>
         <div id="results-history-list"></div>
         <div id="results-history-empty" class="hidden" style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">No completed tests yet.</div>
+        <div id="results-filter-empty" class="hidden" style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">No results match this filter.</div>
       </div>
     </div>
   </div>
@@ -2108,6 +2114,11 @@ function runTester(screen) {
       ['STRUCTURAL',  'Preview dots container present',       () => !!document.getElementById('preview-dots')],
       ['BEHAVIOURAL', 'discardQuestion function defined',     () => typeof discardQuestion === 'function'],
       ['BEHAVIOURAL', 'undoDiscard function defined',         () => typeof undoDiscard === 'function'],
+      ['BEHAVIOURAL', 'CR-020: selectRejectReason defined',   () => typeof selectRejectReason === 'function'],
+      ['BEHAVIOURAL', 'CR-020: discard modal has note field', () => discardQuestion.toString().includes('reject-note')],
+      ['BEHAVIOURAL', 'CR-020: submitRejection reads note',   () => submitRejection.toString().includes('reject-note')],
+      ['BEHAVIOURAL', 'CR-020: note required for "Other"',    () => submitRejection.toString().includes("reason === 'Other'") && submitRejection.toString().includes('return')],
+      ['BEHAVIOURAL', 'CR-020: note stored in rejection row', () => submitRejection.toString().includes('note:')],
       ['BEHAVIOURAL', 'replaceFlagged function defined',      () => typeof replaceFlagged === 'function'],
       ['BEHAVIOURAL', 'replaceFlagged is async',              () => replaceFlagged.constructor.name === 'AsyncFunction'],
       ['BEHAVIOURAL', 'S_flagged initialised as Set',         () => S_flagged instanceof Set],
@@ -3968,26 +3979,82 @@ function discardQuestion(idx) {
     <div class="modal" style="max-width:380px;">
       <h3 style="margin:0 0 12px;font-size:16px;">Why are you rejecting this question?</h3>
       <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">"${q.q.slice(0, 80)}${q.q.length > 80 ? '...' : ''}"</p>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        ${reasons.map(r => `<button class="btn btn-outline" onclick="submitRejection(${idx}, '${r.replace(/'/g, "\\'")}')" style="text-align:left;font-size:13px;padding:10px 14px;">${r}</button>`).join('')}
+      <div id="reject-reason-list" style="display:flex;flex-direction:column;gap:8px;">
+        ${reasons.map((r, ri) => `<button class="btn btn-outline reject-reason-btn" data-reason="${r.replace(/"/g, '&quot;')}" onclick="selectRejectReason(${ri}, ${idx})" style="text-align:left;font-size:13px;padding:10px 14px;">${r}</button>`).join('')}
       </div>
-      <button onclick="document.getElementById('reject-modal').remove()" style="margin-top:12px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;font-family:var(--font);">Cancel</button>
+      <div id="reject-note-wrap" style="display:none;margin-top:12px;">
+        <label id="reject-note-label" style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px;">Add a note (optional) — what exactly is wrong? This helps generate a better replacement.</label>
+        <textarea id="reject-note" rows="3" maxlength="300" placeholder="e.g. two of the options are both correct" style="width:100%;box-sizing:border-box;font-family:var(--font);font-size:13px;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;resize:vertical;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="btn btn-green" style="flex:1;font-size:13px;" onclick="submitRejection(${idx})">Confirm rejection</button>
+          <button class="btn btn-outline" style="font-size:13px;" onclick="backToRejectReasons()">Back</button>
+        </div>
+      </div>
+      <button id="reject-cancel" onclick="document.getElementById('reject-modal').remove()" style="margin-top:12px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;font-family:var(--font);">Cancel</button>
     </div>`;
   document.body.appendChild(overlay);
 }
 
-async function submitRejection(idx, reason) {
-  // Remove modal
+// Step 1 -> 2: a preset reason was chosen. Reveal the note field. The note is
+// REQUIRED when "Other" is selected, optional for every other preset.
+function selectRejectReason(ri, idx) {
+  const btns = document.querySelectorAll('.reject-reason-btn');
+  const chosen = btns[ri];
+  const reason = chosen.getAttribute('data-reason');
+  S._pendingReject = { idx, reason };
+  // Highlight the chosen reason, dim the rest.
+  btns.forEach(b => { b.style.opacity = '0.45'; });
+  chosen.style.opacity = '1';
+  chosen.style.borderColor = 'var(--red)';
+  const wrap = document.getElementById('reject-note-wrap');
+  const label = document.getElementById('reject-note-label');
+  const ta = document.getElementById('reject-note');
+  wrap.style.display = 'block';
+  if (reason === 'Other') {
+    label.textContent = 'Please describe what is wrong (required).';
+    ta.placeholder = 'Describe the problem with this question';
+  } else {
+    label.textContent = 'Add a note (optional) — what exactly is wrong? This helps generate a better replacement.';
+    ta.placeholder = 'e.g. two of the options are both correct';
+  }
+  ta.focus();
+}
+
+function backToRejectReasons() {
+  S._pendingReject = null;
+  document.querySelectorAll('.reject-reason-btn').forEach(b => {
+    b.style.opacity = '1';
+    b.style.borderColor = '';
+  });
+  document.getElementById('reject-note-wrap').style.display = 'none';
+}
+
+async function submitRejection(idx) {
+  const pending = S._pendingReject;
+  if (!pending || pending.idx !== idx) return;
+  const reason = pending.reason;
+  const note = (document.getElementById('reject-note')?.value || '').trim();
+
+  // Free text is mandatory when the parent picked "Other".
+  if (reason === 'Other' && !note) {
+    const ta = document.getElementById('reject-note');
+    if (ta) { ta.style.borderColor = 'var(--red)'; ta.focus(); }
+    showToast('Please describe what is wrong', 'error');
+    return;
+  }
+
+  // Remove modal + clear pending state
   document.getElementById('reject-modal')?.remove();
+  S._pendingReject = null;
 
   const q = S.generatedQuestions[idx];
 
   // Flag for replacement
   S_flagged.add(idx);
-  logAgent('orchestrator', `Question ${idx+1} rejected: ${reason}`, 'warn');
+  logAgent('orchestrator', `Question ${idx+1} rejected: ${reason}${note ? ' — ' + note : ''}`, 'warn');
   renderPreview();
 
-  // Store rejection in DB
+  // Store rejection in DB — preset reason + optional parent note (CR-020).
   try {
     await supabase.from('question_rejections').insert({
       parent_id: S.parentId || null,
@@ -3998,6 +4065,7 @@ async function submitRejection(idx, reason) {
       question_text: q.q,
       question_svg: q.svg || null,
       reason: reason,
+      note: note || null,
     }, session.token);
     logAgent('orchestrator', `Rejection saved for future learning`, 'ok');
   } catch (e) {
@@ -4672,6 +4740,9 @@ function renderProgressScreen(childId) {
   drawBadgeCollection(childId);
   drawTimeChart(myResults);
   renderResultsHistory(myResults);
+  // CR-013/014: reset any active results filter when the screen re-renders
+  document.getElementById('results-filter-banner')?.classList.add('hidden');
+  document.getElementById('results-filter-empty')?.classList.add('hidden');
 
   logAgent('curriculum', `Progress loaded for ${child.name}: ${myResults.length} result(s)`, 'ok');
 }
@@ -4759,7 +4830,7 @@ function renderResultsHistory(results) {
       </div>`;
     }).join('') : `<div style="padding:12px;color:var(--muted);font-size:13px;">Question details not available for this result.</div>`;
 
-    return `<div class="result-history-card">
+    return `<div class="result-history-card" data-topics="${(r.topics||[]).join('|')}" data-date="${new Date(r.completedAt).toDateString()}">
       <div class="result-history-header" onclick="toggleResultHistory(${idx})">
         <div style="flex:1;">
           <div style="font-weight:800;color:var(--oxford);font-size:14px;">${subject} — ${topics}${tutLabel}</div>
@@ -4787,6 +4858,49 @@ function toggleResultHistory(idx) {
   const isOpen = body.classList.contains('open');
   body.classList.toggle('open', !isOpen);
   if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
+}
+
+// CR-013/014: filter the results history list by topic or date.
+function applyResultsFilter(matchFn, label) {
+  const cards = document.querySelectorAll('#results-history-list .result-history-card');
+  let shown = 0;
+  cards.forEach(card => {
+    const match = matchFn(card);
+    card.style.display = match ? '' : 'none';
+    if (match) shown++;
+  });
+  const banner = document.getElementById('results-filter-banner');
+  const lbl    = document.getElementById('results-filter-label');
+  const empty  = document.getElementById('results-filter-empty');
+  if (banner && lbl) { lbl.textContent = label; banner.classList.remove('hidden'); }
+  if (empty) empty.classList.toggle('hidden', shown > 0);
+  // Scroll the results history card into view
+  document.getElementById('results-history-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function filterResultsByTopic(topic) {
+  applyResultsFilter(
+    card => (card.getAttribute('data-topics') || '').split('|').includes(topic),
+    `Showing results for: ${topic}`
+  );
+  logAgent('reviewer', `Results filtered by topic: ${topic}`, '');
+}
+
+function filterResultsByDate(dateStr) {
+  const label = new Date(dateStr).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+  applyResultsFilter(
+    card => card.getAttribute('data-date') === dateStr,
+    `Showing results from: ${label}`
+  );
+  logAgent('reviewer', `Results filtered by date: ${label}`, '');
+}
+
+function clearResultsFilter() {
+  document.querySelectorAll('#results-history-list .result-history-card').forEach(card => {
+    card.style.display = '';
+  });
+  document.getElementById('results-filter-banner')?.classList.add('hidden');
+  document.getElementById('results-filter-empty')?.classList.add('hidden');
 }
 
 // Score over time — pure canvas line chart (§5.5)
@@ -4880,11 +4994,12 @@ function drawMasteryGrid(results, childId) {
     else if (pct >= 50) { bg='var(--amber-light)'; border='var(--amber)'; colour='#7B5800'; }
     else { bg='var(--red-light)'; border='var(--red)'; colour='var(--red)'; }
     const emoji = pct >= 80 ? '✅' : pct >= 50 ? '⚡' : '📖';
-    return `<div style="background:${bg};border:1px solid ${border};border-radius:10px;padding:10px 12px;">
+    const safeTopic = topic.replace(/'/g, "\\'");
+    return `<div onclick="filterResultsByTopic('${safeTopic}')" title="Tap to see ${topic} test results" style="background:${bg};border:1px solid ${border};border-radius:10px;padding:10px 12px;cursor:pointer;transition:transform .15s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform=''">
       <div style="font-size:18px;margin-bottom:4px;">${emoji}</div>
       <div style="font-size:12px;font-weight:800;color:${colour};margin-bottom:2px;">${pct}%</div>
       <div style="font-size:11px;color:var(--muted);line-height:1.3;">${topic}</div>
-      <div style="font-size:10px;color:var(--muted);margin-top:3px;">${scores.length} test${scores.length>1?'s':''}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:3px;">${scores.length} test${scores.length>1?'s':''} · tap to view →</div>
     </div>`;
   }).join('');
 }
@@ -4915,7 +5030,15 @@ function drawStreakCalendar(childId) {
     const bg = d.active ? 'var(--green)' : 'var(--bg)';
     const border = d.active ? 'var(--green)' : 'var(--border)';
     const isToday = d.date.toDateString() === new Date().toDateString();
-    return `<div title="${d.date.toLocaleDateString('en-GB')}" style="width:100%;aspect-ratio:1;border-radius:4px;background:${bg};border:${isToday?'2px solid var(--oxford)':'1px solid '+border};"></div>`;
+    const dayNum = d.date.getDate();
+    if (d.active) {
+      // CR-014: active days are clickable — navigate to that day's results
+      const safeDate = d.date.toDateString();
+      return `<div onclick="filterResultsByDate('${safeDate}')" title="${d.date.toLocaleDateString('en-GB')} — tap to see results"
+        style="width:100%;aspect-ratio:1;border-radius:4px;background:${bg};border:${isToday?'2px solid var(--oxford)':'1px solid '+border};cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:white;transition:transform .15s;"
+        onmouseover="this.style.transform='scale(1.12)'" onmouseout="this.style.transform=''">${dayNum}</div>`;
+    }
+    return `<div title="${d.date.toLocaleDateString('en-GB')}" style="width:100%;aspect-ratio:1;border-radius:4px;background:${bg};border:${isToday?'2px solid var(--oxford)':'1px solid '+border};display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--muted);">${dayNum}</div>`;
   }).join('');
   cal.innerHTML = html;
 
