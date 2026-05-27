@@ -26,7 +26,7 @@ Every question you produce will be checked by an automatic verifier before it re
      - "mean"       inputs = the list; answer is the average
      - "median"     inputs = the list; answer is the middle value
      - "mode"       inputs = the list; answer is the most common value (do NOT use mode if two values tie)
-     - "percent_of"  inputs = exactly two numbers [part, whole]; answer is part as a % of whole
+     - "percent_of"  inputs = exactly two numbers [part, whole]; answer is part as a % of whole. Only use when (part × 100) is divisible by whole, giving a whole-number %. E.g. [24, 80] → 30% ✓. [3, 7] → 42.857…% ✗ — use verify:"none" instead.
      - "fraction_of" inputs = exactly two numbers [whole, fraction]; answer is whole × fraction
      - "closest_to"  inputs = the candidate numbers; ALSO include a "target" number. Answer is the candidate nearest the target. The two nearest candidates must NOT be tied — if two are equally close, the question has two correct answers and will be rejected.
      - "largest"     inputs = the four option values as numbers; answer is the greatest. No two options may share that greatest value.
@@ -43,6 +43,13 @@ RULES FOR "arithmetic" QUESTIONS:
 - "c" must point at that correct option. But do not rely on getting c right by hand — the verifier recomputes and will correct or reject. Your job is to make inputs and op honest.
 - The explanation "e" must match the same calculation.
 - If a maths question genuinely is not a calculation (e.g. "which shape has a line of symmetry?"), use verify "none". Do not force a compute object onto it.
+
+CLEAN-ANSWER RULE — applies to "mean", "median" and "percent_of":
+The verifier rejects a question whose computed answer matches no option. Division-based ops produce messy decimals unless you pick the numbers deliberately. Before choosing inputs, check the result is a whole number or a decimal with at most one place.
+- "mean": sum(inputs) ÷ count must come out clean. WORKED CHECK: 7 values summing to 333 → 333 ÷ 7 = 47.571… (rejected). Change one value so the sum is a multiple of 7, e.g. 336 ÷ 7 = 48 (clean). Never use 7 values unless their sum is a multiple of 7; never 6 unless the sum is a multiple of 6; and so on.
+- "median": with an even count the median is the average of the two middle values — make those two sum to an even number (36 and 42 → 39 ✓; 35 and 42 → 38.5, only use if 38.5 is an option).
+- "percent_of": (part × 100) must be divisible by whole ([24, 80] → 30% ✓; [3, 7] → 42.857…% ✗).
+- If you cannot form clean inputs for the calculation you want, choose different numbers, pick a different op, or use verify:"none".
 
 NO AMBIGUOUS QUESTIONS — applies to EVERY question, every subject, every verify type:
 - Exactly ONE option may be correct. The other three must be clearly, unarguably wrong.
@@ -89,6 +96,7 @@ CRITICAL: The diagram is the EVIDENCE for the correct answer. The child looks at
 6. Never give away the answer in the diagram. If the question asks the child to COUNT, do not number the items. If the question asks the child to READ a value from a graph, the graph must show the data but the answer should require effort — not just reading a label that says the answer.
 7. The diagram must show the SCENARIO, not the ANSWER. If the question asks "which surface reflects best?" — draw the surfaces with light hitting them, but do NOT label one as "Best Reflector!" or write the answer. Let the child work it out from what they see.
 8. Every diagramPrompt MUST end with "Label the diagram with below information (and nothing more):" followed by a numbered list. No exceptions. The label list is a whitelist — only what's listed appears on the diagram. Never put the answer in the label list — only given information.
+9. For biology organ-system questions (digestive system, circulatory system, respiratory system, etc.) the diagram MUST contain the specific measurable data the question is about — a measurement, quantity, time or named substance — not just labelled organ names. A diagram that only names organs ("stomach", "small intestine") with no data values is DECORATIVE: the child cannot derive the answer from it, and it will be rejected. Every biology diagramPrompt MUST include at least one numeric or measurable data value in its label list.
 
 Think about it this way: if a child looks at ONLY the diagram and ONLY the question text, they must be able to find the correct answer.
 
@@ -196,6 +204,17 @@ Label the diagram with below information (and nothing more):
 3. Neutrons (with count 6)
 4. Inner shell electrons (with count 2)
 5. Outer shell electrons (with count 4)
+6. Title
+7. Texts should be away from drawings (proportionally away but near)
+8. No overlaps between two objects unless its legit intersection"
+
+"Draw the human digestive system as a simplified vertical flow diagram — a connected tube with labelled sections in sequence from top to bottom. Show the mouth at the top, then the oesophagus, then a rounded stomach shape, then a long coiled section for the small intestine, then a wider shorter section for the large intestine.
+Label the diagram with below information (and nothing more):
+1. Mouth
+2. Oesophagus
+3. Stomach — 'churns food for 4 hours'
+4. Small intestine — '7 m long, absorbs nutrients'
+5. Large intestine — '1.5 m long, absorbs water'
 6. Title
 7. Texts should be away from drawings (proportionally away but near)
 8. No overlaps between two objects unless its legit intersection"
