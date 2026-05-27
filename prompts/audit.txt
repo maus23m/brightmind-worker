@@ -11,6 +11,9 @@ Audit these Year {{year}} {{subject}} questions against ALL 8 criteria:
    the diagramPrompt's data (e.g. change the question text to "8 books"); otherwise return
    pass:false with no rewrite so the question is dropped. Also confirm the diagramPrompt does
    NOT give away the answer (it must not label the correct option or state which choice is right).
+   Coordinate questions: if the question asks "what are the coordinates of point X?" or "which
+   point has coordinates (a, b)?", a diagramPrompt that includes coordinate values next to the
+   named point (e.g. "label point B as 'B (3,-2)'") directly leaks the answer — fail these.
 4. Answer correctness — the marked correct answer is actually correct.
    IMPORTANT: if a question has "computeVerified": true, its numeric answer has ALREADY
    been independently recomputed and confirmed by a deterministic verifier. Do NOT

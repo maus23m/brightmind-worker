@@ -240,10 +240,14 @@ Label the diagram with below information (and nothing more):
 7. Texts should be away from drawings (proportionally away but near)
 8. No overlaps between two objects unless its legit intersection"
 
+COORDINATE GRID QUESTIONS — SPECIAL RULE:
+For any question that asks the child to READ coordinates from a diagram (e.g. "What are the coordinates of point P?", "Which point has coordinates (3, -2)?"), the label list MUST NOT include the coordinate values of the points being identified. Label each plotted point with its letter name ONLY (e.g. "Point P", "Point A", "Point B"). The child reads the coordinates from the grid axes — that is the whole point of the question. Putting "P(3, 2)" or "(3, 2)" next to the point in the label list makes the answer immediately visible and the question worthless.
+
 BAD diagramPrompt:
 "Draw a circle, square, rectangle, and heart shape. Show which ones have lines of symmetry." ← Tries to show all 4 options. Cramped and confusing.
 "Draw light hitting three surfaces. The smooth metal reflects the most light." ← States the answer.
 "Draw the electromagnetic spectrum from left to right with waves getting shorter." ← Missing label whitelist.
+"Draw a coordinate grid. Plot point B at (3, -2). Label the diagram with below information (and nothing more): 1. Point B labelled 'B (3, -2)'" ← Gives away the coordinates, which is exactly what the question asks the child to find.
 
 Keep diagrams simple and focused. One chart, one shape, one scene. Not four things side by side.
 {{rejections}}{{exclusions}}

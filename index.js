@@ -535,6 +535,13 @@ functions.http("worker", async (req, res) => {
       } catch (e) { console.error(`[Job ${jobId}] Top-up error:`, e.message); }
     }
 
+    if (final.length === 0) {
+      console.error(`[Job ${jobId}] Pipeline produced 0 questions — all candidates rejected`);
+      await updateJob(url, key, jobId, { status: "failed", error: "Pipeline produced 0 questions — all candidates were rejected. Try requesting replacement questions again.", completed_at: new Date().toISOString() });
+      res.status(200).json({ status: "failed", count: 0 });
+      return;
+    }
+
     if (childId) await record(url, key, childId, final, subject, topics);
 
     const cleanQuestions = final.map((q) => {
