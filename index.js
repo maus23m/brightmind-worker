@@ -321,11 +321,14 @@ async function audit(apiKey, qs, yr, subj) {
       questions_json: JSON.stringify(qs.map((q, i) => ({
         i, q: q.q, o: q.o, c: q.c, e: q.e,
         hasDiagram: !!q.svg,
+        // DEF-035: give the auditor the diagramPrompt so criterion 3 can catch
+        // question-diagram data mismatches (previously only a hasDiagram boolean).
+        diagramPrompt: q.diagramPrompt || null,
         computeVerified: !!(q._computeVerified || q._computeCorrected),
       }))),
     });
 
-    const raw = await callClaude(apiKey, prompt, 2000);
+    const raw = await callClaude(apiKey, prompt, 3000);
     const results = JSON.parse(raw.replace(/```json|```/g, "").trim());
 
     return qs.map((q, i) => {
