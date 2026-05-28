@@ -1077,6 +1077,17 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
         </div>
       </div>
 
+      <div class="config-row">
+        <div class="cr-label">
+          Answer format
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;cursor:pointer;">
+            <input type="checkbox" id="mc-toggle" checked onchange="S.multipleChoice=this.checked;document.getElementById('mc-hint').textContent=this.checked?'Child picks from 4 options.':'Child types their answer, then self-marks it.';" style="width:18px;height:18px;cursor:pointer;">
+            Show multiple-choice options
+          </label>
+        </div>
+        <div id="mc-hint" style="font-size:12px;color:var(--muted);font-weight:700;">Child picks from 4 options.</div>
+      </div>
+
       <div class="wizard-actions">
         <button class="btn btn-secondary" onclick="wizBack(3)">← Back</button>
         <button class="btn btn-primary ml-auto" onclick="wizNext(3)">Generate Questions →</button>
@@ -1183,6 +1194,16 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
     <div class="q-text" id="q-text">Loading...</div>
     <div class="encourage-msg" id="encourage-msg"></div>
     <div class="options-grid" id="options-grid"><!-- rendered by JS --></div>
+    <div id="freeform-wrap" style="display:none;margin-bottom:20px;">
+      <input type="text" id="freeform-input" placeholder="Type your answer here…" autocomplete="off"
+        style="width:100%;padding:14px;border:2px solid var(--border);border-radius:10px;font-family:var(--font);font-size:16px;outline:none;margin-bottom:12px;box-sizing:border-box;"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();revealFreeform();}">
+      <button class="btn btn-primary" id="reveal-btn" onclick="revealFreeform()" style="width:100%;">Reveal answer →</button>
+      <div id="selfmark-row" style="display:none;gap:11px;margin-top:12px;">
+        <button class="btn btn-green" onclick="selfMark(true)" style="flex:1;">✓ I got it right</button>
+        <button class="btn btn-red" onclick="selfMark(false)" style="flex:1;">✗ I got it wrong</button>
+      </div>
+    </div>
     <div class="explanation-box" id="explanation-box"></div>
     <button class="btn btn-primary" id="next-btn" onclick="nextQuestion()" style="display:none">Next Question →</button>
   </div>
@@ -1561,6 +1582,7 @@ const S = {
   timerInterval: null,
   timerEnabled: true,
   timerSecsPerQ: 60,
+  multipleChoice: true,   // default: show options (current behaviour)
 };
 
 // ════════════════════════════════════════════════════
@@ -3136,6 +3158,12 @@ function goToWizard() {
   if (timerDisplay) timerDisplay.textContent = '60s per question';
   const timerWrap = document.getElementById('timer-slider-wrap');
   if (timerWrap) timerWrap.style.opacity = '1';
+  // Reset answer-format control
+  S.multipleChoice = true;
+  const mcToggle = document.getElementById('mc-toggle');
+  if (mcToggle) mcToggle.checked = true;
+  const mcHint = document.getElementById('mc-hint');
+  if (mcHint) mcHint.textContent = 'Child picks from 4 options.';
   document.getElementById('q-count-display').textContent = '10';
   selectDiff('medium');
   updateWizardProgress(1);
@@ -4239,6 +4267,7 @@ async function confirmSave() {
       questions:      finalQuestions,
       timer_enabled:  S.timerEnabled,
       timer_secs_per_q: S.timerSecsPerQ,
+      multiple_choice: S.multipleChoice,
     };
     await supabase.from('tutorials').insert(rec, session.token);
     await loadParentData();
@@ -4271,6 +4300,7 @@ async function renderStudentTests() {
       ...t, childId:t.child_id, questions:t.questions||[], topics:t.topics||[],
       questionCount:t.question_count, year:t.year_group, createdAt:t.created_at,
       timer_enabled:t.timer_enabled, timer_secs_per_q:t.timer_secs_per_q,
+      multiple_choice:t.multiple_choice,
     }));
     const res = await supabase.from('results').select('id,tutorial_id', `child_id=eq.${S.childId}`);
     results = res || [];
@@ -4329,6 +4359,10 @@ function startTest(tutorialId) {
   S.timerSecsPerQ = t.timer_secs_per_q || 60;
   logAgent('orchestrator', `Timer: ${S.timerEnabled ? S.timerSecsPerQ + 's/Q' : 'OFF'} (from tutorial)`, '');
 
+  // Apply answer-format setting from the tutorial (default true for legacy tutorials)
+  const multipleChoice = t.multiple_choice !== false;
+  logAgent('orchestrator', `Answer format: ${multipleChoice ? 'multiple choice' : 'type & self-mark'} (from tutorial)`, '');
+
   S.currentTest = {
     tutorialId: t.id,
     subject: t.subject,
@@ -4338,6 +4372,7 @@ function startTest(tutorialId) {
     currentIndex: 0,
     answers: [],
     startTime: Date.now(),
+    multipleChoice,
   };
 
   document.getElementById('test-subject-label').textContent =
@@ -4497,8 +4532,29 @@ function renderQuestion() {
     diagramEl.classList.remove('has-diagram');
   }
 
+  const optionsGrid = document.getElementById('options-grid');
+  const freeformWrap = document.getElementById('freeform-wrap');
+
+  if (test.multipleChoice === false) {
+    // Free-form mode: hide options, show the typed-answer + reveal flow
+    optionsGrid.style.display = 'none';
+    freeformWrap.style.display = 'block';
+    const input = document.getElementById('freeform-input');
+    input.value = '';
+    input.disabled = false;
+    const revealBtn = document.getElementById('reveal-btn');
+    revealBtn.disabled = false;
+    revealBtn.style.display = 'block';
+    document.getElementById('selfmark-row').style.display = 'none';
+    requestAnimationFrame(() => input.focus());
+    return;
+  }
+
+  // Multiple-choice mode (default)
+  optionsGrid.style.display = '';
+  freeformWrap.style.display = 'none';
   const letters = ['A','B','C','D'];
-  document.getElementById('options-grid').innerHTML = q.o.map((opt, i) => `
+  optionsGrid.innerHTML = q.o.map((opt, i) => `
     <button class="option-btn" onclick="answerQuestion(${i}, this)">
       <span class="option-letter">${letters[i]}</span>
       ${opt}
@@ -4528,6 +4584,51 @@ function answerQuestion(idx, el) {
   const expBox = document.getElementById('explanation-box');
   expBox.textContent = (isCorrect ? '✓ Correct! ' : '✗ Not quite. ') + (q.e || '');
   expBox.className = `explanation-box show ${isCorrect?'exp-correct':'exp-wrong'}`;
+
+  const nextBtn = document.getElementById('next-btn');
+  nextBtn.textContent = test.currentIndex === test.questions.length - 1 ? 'See My Results →' : 'Next Question →';
+  nextBtn.style.display = 'flex';
+}
+
+// Free-form (type & self-mark) flow — used when the tutorial has multiple choice off.
+// revealFreeform() locks in the typed answer and shows the correct answer + explanation;
+// selfMark() records whether the child judged their own answer right or wrong.
+let S_freeformTyped = '';
+function revealFreeform() {
+  const test = S.currentTest;
+  const q    = test.questions[test.currentIndex];
+  const input = document.getElementById('freeform-input');
+  S_freeformTyped = (input.value || '').trim();
+
+  input.disabled = true;
+  const revealBtn = document.getElementById('reveal-btn');
+  revealBtn.disabled = true;
+  revealBtn.style.display = 'none';
+
+  const expBox = document.getElementById('explanation-box');
+  expBox.textContent = `Answer: ${q.o[q.c]}. ${q.e || ''}`.trim();
+  expBox.className = 'explanation-box show';
+
+  document.getElementById('selfmark-row').style.display = 'flex';
+}
+
+function selfMark(gotIt) {
+  const test = S.currentTest;
+  const q    = test.questions[test.currentIndex];
+  test.answers.push({
+    questionIndex: test.currentIndex,
+    selected:      gotIt ? q.c : -1,   // keeps `selected === correct` scoring valid
+    correct:       q.c,
+    question:      q.q,
+    options:       q.o,
+    explanation:   q.e || '',
+    mode:          'free_form',
+    typedAnswer:   S_freeformTyped,
+    ...(q._bankId ? { _bankId: q._bankId } : {}),
+  });
+
+  if (gotIt) playCorrectSound(); else playWrongSound();
+  document.getElementById('selfmark-row').style.display = 'none';
 
   const nextBtn = document.getElementById('next-btn');
   nextBtn.textContent = test.currentIndex === test.questions.length - 1 ? 'See My Results →' : 'Next Question →';
@@ -4643,11 +4744,14 @@ async function showResults() {
   document.getElementById('res-breakdown').innerHTML = test.answers.map((a, i) => {
     const q = test.questions[i];
     const ok = a.selected === a.correct;
+    const ansText = a.mode === 'free_form'
+      ? `You typed: ${a.typedAnswer || '(blank)'} · Correct: ${q.o[q.c]} · self-marked ${ok?'right':'wrong'}`
+      : (ok ? 'Correct' : 'Your answer: '+q.o[a.selected]+' · Correct: '+q.o[q.c]);
     return `<div class="breakdown-row">
       <span class="bd-icon">${ok?'✅':'❌'}</span>
       <div class="bd-content">
         <div class="bd-q">${q.q.substring(0,70)}${q.q.length>70?'…':''}</div>
-        <div class="bd-ans">${ok?'Correct':'Your answer: '+q.o[a.selected]+' · Correct: '+q.o[q.c]}</div>
+        <div class="bd-ans">${ansText}</div>
       </div>
       <span class="bd-badge ${ok?'bdb-ok':'bdb-fail'}">${ok?'✓':'✗'}</span>
     </div>`;
@@ -4813,17 +4917,20 @@ function renderResultsHistory(results) {
       const correct  = a.selected === a.correct;
       const question = a.question || a.q || `Question ${qi + 1}`;
       const options  = a.options || a.o || [];
-      const selectedText = options[a.selected] || `Option ${a.selected + 1}`;
+      const isFreeform   = a.mode === 'free_form';
+      const selectedText = isFreeform
+        ? (a.typedAnswer || '(blank)')
+        : (options[a.selected] || `Option ${a.selected + 1}`);
       const correctText  = options[a.correct]  || `Option ${a.correct + 1}`;
       const explanation  = a.explanation || a.e || '';
 
       return `<div class="rhb-row">
         <div class="rhb-icon">${correct ? '✅' : '❌'}</div>
         <div class="rhb-content">
-          <div class="rhb-question">Q${qi+1}: ${question}</div>
+          <div class="rhb-question">Q${qi+1}: ${question}${isFreeform ? ' <span style="color:var(--muted);font-weight:600;">(self-marked)</span>' : ''}</div>
           <div class="rhb-answer">
             Your answer: <span style="color:${correct ? 'var(--green)' : 'var(--red)'}">${selectedText}</span>
-            ${!correct ? ` &nbsp;·&nbsp; Correct answer: <span style="color:var(--green)">${correctText}</span>` : ''}
+            ${(!correct || isFreeform) ? ` &nbsp;·&nbsp; Correct answer: <span style="color:var(--green)">${correctText}</span>` : ''}
           </div>
           ${explanation ? `<div class="rhb-explanation">💡 ${explanation}</div>` : ''}
         </div>
