@@ -238,10 +238,13 @@ async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections
 // ── Stage 2: Compute Engine (DEF-041) ──
 // Deterministic answer verifier. Lives in its own module (compute.js) so it is
 // independently unit-testable (see compute.test.js). It recomputes the answer
-// from compute.inputs ALONE — never reads the model's c or e — then confirms c,
+// from the compute block ALONE — never reads the model's c or e — then confirms c,
 // corrects c to the VERIFIED value, or rejects the question (fail-closed).
-// Only questions tagged verify:"arithmetic" are checked; verify:"equation_balance"
-// and verify:"none" pass through untouched (correctness owned by the audit agent).
+// verify:"arithmetic" covers the legacy single-ops plus the formula (multi-step
+// expression) and solve_for (algebra-by-substitution) ops; verify:"equation_balance"
+// is now verified by atom conservation when a compute block is present. Only
+// verify:"none" (and equation_balance with no compute block) passes through to the
+// audit agent.
 const { computeVerify: verify } = require("./compute");
 
 // ── Stage 3: Claude SVG Diagram Generation ──

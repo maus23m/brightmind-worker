@@ -50,6 +50,9 @@ const OPS = {
   // Two-element ops.
   percent_of: (a) => (a.length === 2 && a[1] !== 0 ? (a[0] / a[1]) * 100 : null),
   fraction_of:(a) => (a.length === 2 ? a[0] * a[1] : null), // inputs:[whole, fraction]
+  // divide: inputs:[a, b] → a / b. b === 0 → null (undefined). Covers the common
+  // speed/density/rate case without needing the full formula evaluator (CR-015).
+  divide:     (a) => (a.length === 2 && a[1] !== 0 ? a[0] / a[1] : null),
 
   // ── Select-among-the-options comparison ops (DEF-042 class) ──
   // The answer is one of the candidate numbers, chosen by comparison. Each
@@ -98,6 +101,255 @@ const TARGET_OPS = new Set(["closest_to", "equal_to"]);
 // answer or the question is rejected as having no matching option.
 const MATCH_TOL = 0.01;
 
+// Relative match tolerance for irrational / rounded answers (trig, π, roots).
+// truth 78.5398… must match an option printed as "78.5"; a flat 0.01 absolute
+// gate is too tight for large or irrational results. The effective tolerance is
+// max(MATCH_TOL, |truth| * REL_TOL), so small integers stay gated at 0.01 while
+// large/irrational answers get a proportional window. 0.1% comfortably absorbs
+// 1-dp / 3-sig-fig rounding and the π≈3.14 convention, yet stays tight enough that
+// realistic distractors are not mistaken for the answer. A per-block compute.tol
+// can widen this (e.g. aggressive 2-sig-fig rounding), clamped to TOL_MAX_REL.
+const REL_TOL = 0.001;      // 0.1%
+const TOL_MAX_REL = 0.005;  // hard ceiling on any per-block override
+
+// Effective absolute tolerance for accepting an option as the verified answer.
+function matchTolFor(truth, override) {
+  let rel = REL_TOL;
+  if (typeof override === "number" && Number.isFinite(override) && override > 0) {
+    rel = Math.min(override, TOL_MAX_REL);
+  }
+  return Math.max(MATCH_TOL, Math.abs(truth) * rel);
+}
+
+// ── Safe expression evaluator ──
+// Evaluates a small arithmetic grammar over named numeric variables WITHOUT eval
+// or Function. Supports: numbers, identifiers (vars / the constant `pi` / unary
+// functions), operators + - * / ^ (^ right-associative), parentheses. Whitelisted
+// functions: sqrt cbrt sin cos tan abs. Trig takes DEGREES (GCSE convention).
+// Any unexpected character, unknown identifier, or arity error throws → the caller
+// treats the question as unverifiable and rejects it (fail-closed).
+const FUNCS = {
+  sqrt: Math.sqrt,
+  cbrt: Math.cbrt,
+  sin:  (d) => Math.sin((d * Math.PI) / 180),
+  cos:  (d) => Math.cos((d * Math.PI) / 180),
+  tan:  (d) => Math.tan((d * Math.PI) / 180),
+  abs:  Math.abs,
+};
+const PRECEDENCE = { "+": 1, "-": 1, "*": 2, "/": 2, "^": 3 };
+
+function tokenize(expr) {
+  const tokens = [];
+  let i = 0;
+  while (i < expr.length) {
+    const c = expr[i];
+    if (c === " " || c === "\t") { i++; continue; }
+    if (c >= "0" && c <= "9" || c === ".") {
+      let j = i + 1;
+      while (j < expr.length && (expr[j] >= "0" && expr[j] <= "9" || expr[j] === ".")) j++;
+      tokens.push({ t: "num", v: parseFloat(expr.slice(i, j)) });
+      i = j;
+      continue;
+    }
+    if (c >= "a" && c <= "z" || c >= "A" && c <= "Z" || c === "_") {
+      let j = i + 1;
+      while (j < expr.length && (/[A-Za-z0-9_]/).test(expr[j])) j++;
+      tokens.push({ t: "id", v: expr.slice(i, j) });
+      i = j;
+      continue;
+    }
+    if ("+-*/^()".includes(c)) {
+      tokens.push({ t: "op", v: c });
+      i++;
+      continue;
+    }
+    throw new Error(`bad character "${c}" in expression`);
+  }
+  return tokens;
+}
+
+// Shunting-yard → RPN. Handles unary minus, function calls, right-assoc `^`.
+function toRPN(tokens) {
+  const out = [];
+  const stack = [];
+  let prev = null; // previous token, to detect unary minus
+  for (const tok of tokens) {
+    if (tok.t === "num") {
+      out.push(tok);
+    } else if (tok.t === "id") {
+      if (Object.prototype.hasOwnProperty.call(FUNCS, tok.v)) {
+        stack.push({ t: "func", v: tok.v });
+      } else {
+        out.push(tok); // variable or constant (resolved at eval time)
+      }
+    } else if (tok.v === "(") {
+      stack.push(tok);
+    } else if (tok.v === ")") {
+      while (stack.length && stack[stack.length - 1].v !== "(") out.push(stack.pop());
+      if (!stack.length) throw new Error("mismatched parentheses");
+      stack.pop(); // discard "("
+      if (stack.length && stack[stack.length - 1].t === "func") out.push(stack.pop());
+    } else { // operator
+      // Unary minus: a "-" at the start, after another operator, or after "(".
+      const isUnary = tok.v === "-" &&
+        (prev === null || (prev.t === "op" && prev.v !== ")"));
+      if (isUnary) {
+        out.push({ t: "num", v: 0 }); // rewrite -x as (0 - x)
+      }
+      const o1 = tok.v;
+      while (stack.length) {
+        const top = stack[stack.length - 1];
+        if (top.t === "func") { out.push(stack.pop()); continue; }
+        if (top.t !== "op" || top.v === "(") break;
+        const o2 = top.v;
+        const leftAssoc = o1 !== "^";
+        if ((leftAssoc && PRECEDENCE[o1] <= PRECEDENCE[o2]) ||
+            (!leftAssoc && PRECEDENCE[o1] < PRECEDENCE[o2])) {
+          out.push(stack.pop());
+        } else break;
+      }
+      stack.push(tok);
+    }
+    prev = tok;
+  }
+  while (stack.length) {
+    const top = stack.pop();
+    if (top.v === "(" || top.v === ")") throw new Error("mismatched parentheses");
+    out.push(top);
+  }
+  return out;
+}
+
+function evalRPN(rpn, vars) {
+  const st = [];
+  for (const tok of rpn) {
+    if (tok.t === "num") {
+      st.push(tok.v);
+    } else if (tok.t === "id") {
+      if (tok.v === "pi") { st.push(Math.PI); continue; }
+      if (!Object.prototype.hasOwnProperty.call(vars, tok.v)) {
+        throw new Error(`unknown variable "${tok.v}"`);
+      }
+      const val = vars[tok.v];
+      if (typeof val !== "number" || !Number.isFinite(val)) {
+        throw new Error(`variable "${tok.v}" is not a finite number`);
+      }
+      st.push(val);
+    } else if (tok.t === "func") {
+      if (!st.length) throw new Error(`function "${tok.v}" missing argument`);
+      st.push(FUNCS[tok.v](st.pop()));
+    } else { // operator
+      if (st.length < 2) throw new Error(`operator "${tok.v}" missing operand`);
+      const b = st.pop(), a = st.pop();
+      switch (tok.v) {
+        case "+": st.push(a + b); break;
+        case "-": st.push(a - b); break;
+        case "*": st.push(a * b); break;
+        case "/": st.push(b === 0 ? NaN : a / b); break;
+        case "^": st.push(Math.pow(a, b)); break;
+        default: throw new Error(`unknown operator "${tok.v}"`);
+      }
+    }
+  }
+  if (st.length !== 1) throw new Error("malformed expression");
+  return st[0];
+}
+
+// Returns a finite number, or null if the expression is unverifiable.
+function safeEval(expr, vars) {
+  if (typeof expr !== "string" || !expr.trim()) return null;
+  const v = (vars && typeof vars === "object") ? vars : {};
+  const r = evalRPN(toRPN(tokenize(expr)), v);
+  return Number.isFinite(r) ? r : null;
+}
+
+// ── Chemistry formula / equation parsing (equation_balance) ──
+// parseFormula("Ca(OH)2") → { Ca:1, O:2, H:2 }. Handles multi-letter elements,
+// subscripts and nested parenthesised groups. Throws on malformed input.
+function parseFormula(str) {
+  const counts = {};
+  let i = 0;
+  function parseGroup() {
+    const local = {};
+    while (i < str.length) {
+      const c = str[i];
+      if (c === "(") {
+        i++;
+        const inner = parseGroup();
+        if (str[i] !== ")") throw new Error("mismatched () in formula");
+        i++;
+        let n = readNumber();
+        if (n === null) n = 1;
+        for (const [el, k] of Object.entries(inner)) local[el] = (local[el] || 0) + k * n;
+      } else if (c === ")") {
+        break;
+      } else if (c >= "A" && c <= "Z") {
+        let el = c;
+        i++;
+        while (i < str.length && str[i] >= "a" && str[i] <= "z") { el += str[i]; i++; }
+        let n = readNumber();
+        if (n === null) n = 1;
+        local[el] = (local[el] || 0) + n;
+      } else {
+        throw new Error(`bad character "${c}" in formula`);
+      }
+    }
+    return local;
+  }
+  function readNumber() {
+    let j = i;
+    while (j < str.length && str[j] >= "0" && str[j] <= "9") j++;
+    if (j === i) return null;
+    const n = parseInt(str.slice(i, j), 10);
+    i = j;
+    return n;
+  }
+  const top = parseGroup();
+  if (i !== str.length) throw new Error("trailing characters in formula");
+  for (const [el, k] of Object.entries(top)) counts[el] = (counts[el] || 0) + k;
+  return counts;
+}
+
+// Parse one side ("2 H2 + O2") into [{coef, counts}]. A leading integer is the
+// stoichiometric coefficient; the rest is a formula.
+function parseSide(side) {
+  return side.split("+").map((termRaw) => {
+    const term = termRaw.trim();
+    if (!term) throw new Error("empty term in equation");
+    const m = term.match(/^(\d+)\s*(.+)$/);
+    let coef = 1, formula = term;
+    if (m) { coef = parseInt(m[1], 10); formula = m[2].trim(); }
+    return { coef, counts: parseFormula(formula.replace(/\s+/g, "")) };
+  });
+}
+
+// parseEquation("2 H2 + O2 -> 2 H2O") → { left:[...], right:[...] }.
+function parseEquation(eq) {
+  const parts = eq.split(/->|=|→/);
+  if (parts.length !== 2) throw new Error("equation needs exactly one arrow");
+  return { left: parseSide(parts[0]), right: parseSide(parts[1]) };
+}
+
+// True iff every element's Σ(coef×count) matches on both sides (and ≥1 atom).
+function balances(eq) {
+  const tally = (terms, sign) => {
+    const t = {};
+    for (const { coef, counts } of terms) {
+      for (const [el, k] of Object.entries(counts)) t[el] = (t[el] || 0) + sign * coef * k;
+    }
+    return t;
+  };
+  const net = tally(eq.left, 1);
+  const right = tally(eq.right, -1);
+  for (const [el, k] of Object.entries(right)) net[el] = (net[el] || 0) + k;
+  let totalAtoms = 0;
+  for (const { coef, counts } of eq.left) {
+    for (const k of Object.values(counts)) totalAtoms += coef * k;
+  }
+  if (totalAtoms <= 0) return false;
+  return Object.values(net).every((v) => Math.abs(v) < EPS);
+}
+
 // Parse a numeric value out of an option string ("33", "33 cm", "£40", "40%").
 function optionValue(opt) {
   if (typeof opt === "number") return opt;
@@ -138,6 +390,141 @@ function duplicateOptionReason(o) {
   return null;
 }
 
+// Match a COMPUTED numeric truth (formula / solve_for) to one of the options.
+// Uses the relative tolerance (matchTolFor) for irrational/rounded answers and a
+// second-match guard: if a second option also falls within tolerance the question
+// has two acceptable answers → reject. Only for computed truths — selection ops
+// (largest/closest_to/…) keep their own exact matching, where close-but-distinct
+// options like 0.6 and 0.605 are legitimate and the op already guarantees a winner.
+function resolveTruthToOption(q, truth, tolOverride) {
+  const tol = matchTolFor(truth, tolOverride);
+  const vals = q.o.map(optionValue);
+  let match = -1, matchDist = Infinity, secondDist = Infinity;
+  vals.forEach((v, i) => {
+    if (v === null || !Number.isFinite(v)) return;
+    const d = Math.abs(v - truth);
+    if (d < matchDist) { secondDist = matchDist; matchDist = d; match = i; }
+    else if (d < secondDist) { secondDist = d; }
+  });
+  if (match < 0 || matchDist > tol) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `verified answer ${truth} is not one of the four options` };
+  }
+  if (secondDist <= tol) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `two options match the verified answer ${truth} within tolerance — question is ambiguous` };
+  }
+  if (match !== q.c) {
+    return { ...q, c: match, _computeCorrected: true, _computeTruth: truth };
+  }
+  return { ...q, _computeVerified: true, _computeTruth: truth };
+}
+
+// formula op — evaluate a safe expression over named numeric vars (multi-step
+// GCSE calculations: Pythagoras, compound interest, area, speed, trig …).
+function verifyFormula(q, cb) {
+  if (typeof cb.expr !== "string" || !cb.expr.trim()) {
+    return { ...q, _computeFailed: true, _computeReason: `formula op requires a string "expr"` };
+  }
+  if (!cb.vars || typeof cb.vars !== "object" || Array.isArray(cb.vars) ||
+      !Object.values(cb.vars).every((n) => typeof n === "number" && Number.isFinite(n))) {
+    return { ...q, _computeFailed: true, _computeReason: `formula op requires "vars" of finite numbers` };
+  }
+  let truth;
+  try {
+    truth = safeEval(cb.expr, cb.vars);
+  } catch (e) {
+    return { ...q, _computeFailed: true, _computeReason: `formula error: ${e.message}` };
+  }
+  if (truth === null) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `formula "${cb.expr}" is undefined for the given vars` };
+  }
+  return resolveTruthToOption(q, truth, cb.tol);
+}
+
+// solve_for — algebra by substitution. Substitute each candidate (defaults to the
+// option values) into lhs/rhs; survivors satisfy lhs ≈ rhs. Exactly one survivor →
+// truth; zero or ≥2 → reject (the quadratic-with-both-roots-as-options trap).
+function verifySolveFor(q, cb) {
+  if (typeof cb.var !== "string" || !cb.var ||
+      typeof cb.lhs !== "string" || typeof cb.rhs !== "string") {
+    return { ...q, _computeFailed: true,
+      _computeReason: `solve_for requires string "var", "lhs" and "rhs"` };
+  }
+  let candidates = cb.candidates;
+  if (!Array.isArray(candidates) || !candidates.length) candidates = q.o.map(optionValue);
+  const survivors = [];
+  for (const cand of candidates) {
+    if (typeof cand !== "number" || !Number.isFinite(cand)) continue;
+    let l, r;
+    try {
+      l = safeEval(cb.lhs, { [cb.var]: cand });
+      r = safeEval(cb.rhs, { [cb.var]: cand });
+    } catch (e) {
+      return { ...q, _computeFailed: true, _computeReason: `solve_for error: ${e.message}` };
+    }
+    if (l === null || r === null) continue;
+    const scale = Math.max(1, Math.abs(l), Math.abs(r));
+    if (Math.abs(l - r) <= scale * REL_TOL) survivors.push(cand);
+  }
+  if (survivors.length === 0) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `no option satisfies ${cb.lhs} = ${cb.rhs}` };
+  }
+  if (survivors.length > 1) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `multiple options satisfy ${cb.lhs} = ${cb.rhs} — question is ambiguous` };
+  }
+  return resolveTruthToOption(q, survivors[0], cb.tol);
+}
+
+// equation_balance — atom-conservation check for chemistry balancing questions.
+// Two sub-modes:
+//   A (coefficient): cb.equation carries a "?" placeholder for the asked coefficient;
+//      substitute each option value, the single balancing value is the answer.
+//   B (which-equation): each option is itself a full equation string; the single
+//      one that balances is the answer (used when cb.equation is absent).
+function verifyEquationBalance(q) {
+  const cb = q.compute;
+  const settle = (match, count) => {
+    if (count !== 1) {
+      return { ...q, _computeFailed: true, _computeReason:
+        count === 0 ? `no option balances the equation`
+                    : `${count} options balance — question is ambiguous` };
+    }
+    if (match !== q.c) return { ...q, c: match, _computeCorrected: true };
+    return { ...q, _computeVerified: true };
+  };
+
+  // Mode B — options are equations.
+  if (typeof cb.equation !== "string") {
+    let match = -1, count = 0;
+    q.o.forEach((opt, i) => {
+      let ok = false;
+      try { ok = balances(parseEquation(String(opt))); } catch (e) { ok = false; }
+      if (ok) { count++; if (match < 0) match = i; }
+    });
+    return settle(match, count);
+  }
+
+  // Mode A — coefficient placeholder.
+  if (!cb.equation.includes("?")) {
+    return { ...q, _computeFailed: true, _computeReason:
+      `equation_balance needs a "?" coefficient placeholder, or options that are full equations` };
+  }
+  const vals = q.o.map(optionValue);
+  let match = -1, count = 0;
+  vals.forEach((v, i) => {
+    if (v === null || !Number.isInteger(v) || v <= 0) return;
+    let ok = false;
+    try { ok = balances(parseEquation(cb.equation.replace(/\?/g, String(v)))); }
+    catch (e) { ok = false; }
+    if (ok) { count++; if (match < 0) match = i; }
+  });
+  return settle(match, count);
+}
+
 // ── computeVerify ──
 // qs: array of question objects from generate(). subj kept for signature symmetry.
 // Returns the same array; questions are corrected (c fixed to the verified answer)
@@ -152,15 +539,28 @@ function computeVerify(qs) {
       return { ...q, _computeFailed: true, _computeReason: dupReason };
     }
 
-    // STEP 2 — arithmetic verification only. equation_balance + none pass through;
-    // their answer correctness is owned by the audit agent (CR-015 pending for a
-    // dedicated equation_balance verifier).
+    // STEP 2a — chemistry equation balancing. Verified only when a compute block is
+    // present; a bare equation_balance tag still passes through to the audit agent
+    // (fail-open preserved for in-flight content lacking a compute block).
+    if (q.verify === "equation_balance") {
+      return (q.compute && typeof q.compute === "object") ? verifyEquationBalance(q) : q;
+    }
+
+    // STEP 2b — arithmetic verification only. verify:"none" passes through; its
+    // answer correctness is owned by the audit agent.
     if (q.verify !== "arithmetic") return q;
 
     const cb = q.compute;
-    // verify:"arithmetic" with no/invalid compute block → cannot verify → reject.
-    if (!cb || typeof cb !== "object" ||
-        !KNOWN_OPS.has(cb.op) ||
+    if (!cb || typeof cb !== "object") {
+      return { ...q, _computeFailed: true, _computeReason: `missing or invalid compute block` };
+    }
+
+    // Expression-based ops branch BEFORE the legacy inputs-array validation.
+    if (cb.op === "formula") return verifyFormula(q, cb);
+    if (cb.op === "solve_for") return verifySolveFor(q, cb);
+
+    // ── Legacy single-op path (sum…equal_to) — matching logic unchanged ──
+    if (!KNOWN_OPS.has(cb.op) ||
         !Array.isArray(cb.inputs) ||
         !cb.inputs.length ||
         !cb.inputs.every((n) => typeof n === "number" && Number.isFinite(n))) {
@@ -219,4 +619,7 @@ function computeVerify(qs) {
   });
 }
 
-module.exports = { computeVerify, OPS, KNOWN_OPS, optionValue, duplicateOptionReason };
+module.exports = {
+  computeVerify, OPS, KNOWN_OPS, optionValue, duplicateOptionReason,
+  safeEval, parseFormula, parseEquation, balances,
+};
