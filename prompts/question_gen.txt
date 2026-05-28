@@ -13,9 +13,12 @@ PRINCIPLES:
 ANSWER VERIFICATION — READ CAREFULLY:
 Every question you produce will be checked by an automatic verifier before it reaches a child. To make that possible, every question MUST include a "verify" field that says how its answer can be checked. There are three values:
 
-1. "arithmetic" — the answer is a single number worked out by a calculation on given numbers. This covers maths (range, mean, median, mode, totals, differences, percentages, fractions of a quantity, and "closest to / nearest" value questions) AND calculable science (speed, density, force as mass×something, simple totals). When verify is "arithmetic" you MUST also include a "compute" object: {"op": "<operation>", "inputs": [<the raw numbers>]}.
-   The verifier will redo the calculation itself from inputs. So inputs must be the ACTUAL numbers from your question, and op must be the operation that produces the correct answer.
-   Allowed op values and what inputs means for each:
+1. "arithmetic" — the answer is a single number worked out by a calculation on given numbers. This covers maths (range, mean, median, mode, totals, differences, percentages, fractions of a quantity, "closest to / nearest" value questions, and ANY multi-step formula — areas, Pythagoras, compound interest, trigonometry) AND calculable science (speed, density, pressure, force, rates). When verify is "arithmetic" you MUST also include a "compute" object describing how to work the answer out.
+   The verifier will redo the calculation itself. So the numbers you give it must be the ACTUAL numbers from your question, and the operation must be the one that produces the correct answer.
+
+   THREE kinds of compute object — pick the one that fits:
+
+   (a) SINGLE-OP — {"op": "<operation>", "inputs": [<the raw numbers>]}. Use for the simple list/pair operations below.
      - "sum"        inputs = all the numbers to add
      - "product"    inputs = all the numbers to multiply
      - "count"      inputs = the list of items being counted
@@ -26,6 +29,7 @@ Every question you produce will be checked by an automatic verifier before it re
      - "mean"       inputs = the list; answer is the average
      - "median"     inputs = the list; answer is the middle value
      - "mode"       inputs = the list; answer is the most common value (do NOT use mode if two values tie)
+     - "divide"     inputs = exactly two numbers [a, b]; answer is a ÷ b (b ≠ 0). Use for speed (distance ÷ time), density (mass ÷ volume), rates, unit-rate questions.
      - "percent_of"  inputs = exactly two numbers [part, whole]; answer is part as a % of whole. Only use when (part × 100) is divisible by whole, giving a whole-number %. E.g. [24, 80] → 30% ✓. [3, 7] → 42.857…% ✗ — use verify:"none" instead.
      - "fraction_of" inputs = exactly two numbers [whole, fraction]; answer is whole × fraction
      - "closest_to"  inputs = the candidate numbers; ALSO include a "target" number. Answer is the candidate nearest the target. The two nearest candidates must NOT be tied — if two are equally close, the question has two correct answers and will be rejected.
@@ -33,7 +37,18 @@ Every question you produce will be checked by an automatic verifier before it re
      - "smallest"    inputs = the four option values as numbers; answer is the least. No two options may share that least value.
      - "equal_to"    inputs = the four option values as numbers; ALSO include a "target" number. Answer is the one option equal to the target. Exactly one option must equal it — not zero, not two.
 
-2. "equation_balance" — a chemistry question asking to balance an equation. Use this value, but you do not need a compute object yet.
+   (b) FORMULA (multi-step) — {"op": "formula", "expr": "<expression>", "vars": {<name>: <number>, ...}}. Use whenever the answer needs more than one of the operations above: areas, Pythagoras, compound interest, trigonometry, any chained calculation. The verifier evaluates "expr" using your "vars".
+     - "expr" is ordinary maths: the variable names you define in "vars", numbers, the operators + - * / ^ (^ is "to the power of"), and round brackets ( ). Allowed functions: sqrt, cbrt, sin, cos, tan, abs. The constant pi is available.
+     - TRIGONOMETRY IS IN DEGREES: sin(30) means sine of 30 degrees = 0.5.
+     - Every name used in "expr" MUST appear in "vars", set to the actual number from your question.
+     - Examples of expr: "sqrt(a^2+b^2)" (Pythagoras), "pi*r^2" (circle area), "P*(1+r)^n" (compound interest), "d/t" (speed), "h*sin(theta)" (opposite side).
+
+   (c) SOLVE_FOR (algebra) — {"op": "solve_for", "var": "x", "lhs": "<expr>", "rhs": "<expr>", "candidates": [<the four option values>]}. Use for "solve for x"-type equations. The verifier substitutes each candidate into lhs and rhs and keeps the one that makes them equal. EXACTLY ONE option must satisfy the equation — if two do (e.g. both roots of a quadratic are options), the question has two correct answers and is rejected. lhs/rhs use the same expression grammar as "formula", with "var" as the unknown.
+
+2. "equation_balance" — a chemistry question about balancing an equation. You MUST now include a compute object, in one of two shapes:
+   - Coefficient question ("what number balances …?"): {"op": "equation_balance", "equation": "2 H2 + O2 -> ? H2O"} — write the full equation with a single "?" where the asked-for coefficient goes; the four options are the candidate numbers. The verifier substitutes each option and checks atom counts balance.
+   - "Which equation is balanced?" question: {"op": "equation_balance"} (no "equation" field) — each of the four options must itself be a complete equation string (e.g. "2H2 + O2 -> 2H2O"); the verifier finds the single one that balances.
+   Write formulae normally: element symbols (e.g. H, O, Na, Cl), subscripts as plain digits (H2O), groups in brackets (Ca(OH)2), and -> (or =) between sides. Exactly one option must be correct.
 
 3. "none" — the answer is a fact or a reasoning judgement, not a calculation. This covers all biology, conceptual chemistry and physics, geometry-reasoning questions, definitions, and "which of these..." questions. No compute object needed.
 
@@ -49,7 +64,15 @@ The verifier rejects a question whose computed answer matches no option. Divisio
 - "mean": sum(inputs) ÷ count must come out clean. WORKED CHECK: 7 values summing to 333 → 333 ÷ 7 = 47.571… (rejected). Change one value so the sum is a multiple of 7, e.g. 336 ÷ 7 = 48 (clean). Never use 7 values unless their sum is a multiple of 7; never 6 unless the sum is a multiple of 6; and so on.
 - "median": with an even count the median is the average of the two middle values — make those two sum to an even number (36 and 42 → 39 ✓; 35 and 42 → 38.5, only use if 38.5 is an option).
 - "percent_of": (part × 100) must be divisible by whole ([24, 80] → 30% ✓; [3, 7] → 42.857…% ✗).
+- "divide": choose numbers that divide cleanly to an option you list (120 ÷ 8 = 15 ✓).
 - If you cannot form clean inputs for the calculation you want, choose different numbers, pick a different op, or use verify:"none".
+
+IRRATIONAL / ROUNDED ANSWERS — applies to "formula" (areas, π, roots, trigonometry):
+- These produce non-terminating decimals. State the rounding in the question ("to 1 decimal place") and make the correct option that rounded value. The verifier accepts an option within a small tolerance of the true value, so a sensibly rounded option (1 dp, or 3 significant figures) will match.
+- Keep the other three options clearly further away than rounding error — never place a distractor within ~0.1% of the true answer, or the question reads as having two correct answers and is rejected.
+
+SOLVE_FOR — one root only:
+- For "solve_for", exactly ONE of the four options may satisfy the equation. For a quadratic with two real roots, NEVER list the second root as a distractor — that makes two correct answers and the question is rejected. Choose distractors that are common wrong workings, not the other root.
 
 NO AMBIGUOUS QUESTIONS — applies to EVERY question, every subject, every verify type:
 - Exactly ONE option may be correct. The other three must be clearly, unarguably wrong.
@@ -67,9 +90,40 @@ Question: "A shop records daily customers: Mon 45, Tue 38, Wed 52, Thu 41, Fri 6
 The range is 78 (largest) minus 38 (smallest) = 40.
 {"q":"A shop records daily customers: Mon 45, Tue 38, Wed 52, Thu 41, Fri 64, Sat 78, Sun 56. What is the range?","o":["33","40","45","78"],"c":1,"e":"Range = highest - lowest = 78 - 38 = 40.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"range","inputs":[45,38,52,41,64,78,56]}}
 
-WORKED EXAMPLE — arithmetic (calculable science):
+WORKED EXAMPLE — arithmetic (calculable science, division):
 Question: "A car travels 120 metres in 8 seconds. What is its average speed?"
-Speed = distance ÷ ... — expressed as a division this is not a listed op, so phrase the data so a listed op fits, OR use verify "none" if no op fits. Here, average speed = 120 ÷ 8 = 15. There is no "divide" op, so this question should use verify "none" and rely on the audit agent. Only use "arithmetic" when one of the listed ops genuinely produces the answer.
+Speed = distance ÷ time = 120 ÷ 8 = 15 m/s.
+{"q":"A car travels 120 metres in 8 seconds. What is its average speed?","o":["8 m/s","15 m/s","128 m/s","960 m/s"],"c":1,"e":"Speed = distance ÷ time = 120 ÷ 8 = 15 m/s.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"divide","inputs":[120,8]}}
+
+WORKED EXAMPLE — arithmetic (formula, Pythagoras):
+Question: "A right-angled triangle has shorter sides 6 cm and 8 cm. How long is the hypotenuse?"
+Hypotenuse = sqrt(6² + 8²) = sqrt(100) = 10 cm.
+{"q":"A right-angled triangle has shorter sides 6 cm and 8 cm. How long is the hypotenuse?","o":["7 cm","10 cm","14 cm","48 cm"],"c":1,"e":"Hypotenuse = √(6² + 8²) = √100 = 10 cm.","needsDiagram":true,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":{"a":6,"b":8}}}
+
+WORKED EXAMPLE — arithmetic (formula, circle area with π):
+Question: "A circle has radius 5 cm. What is its area? (to 1 decimal place)"
+Area = π × 5² = 78.5 cm² (1 dp).
+{"q":"A circle has radius 5 cm. What is its area, to 1 decimal place?","o":["31.4 cm²","78.5 cm²","157.1 cm²","25 cm²"],"c":1,"e":"Area = π × r² = π × 25 ≈ 78.5 cm².","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"pi*r^2","vars":{"r":5}}}
+
+WORKED EXAMPLE — arithmetic (formula, compound interest):
+Question: "£2000 is invested at 3% compound interest per year. What is it worth after 4 years?"
+Value = 2000 × 1.03⁴ = £2251.02 (2 dp).
+{"q":"£2000 is invested at 3% compound interest per year. What is it worth after 4 years?","o":["£2240.00","£2251.02","£2120.00","£2000.00"],"c":1,"e":"Value = 2000 × 1.03⁴ ≈ £2251.02.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"P*(1+r)^n","vars":{"P":2000,"r":0.03,"n":4}}}
+
+WORKED EXAMPLE — arithmetic (formula, trigonometry — degrees):
+Question: "A ramp is 10 m long and rises at 30° to the ground. How high is the top? (to 1 dp)"
+Height = 10 × sin(30°) = 5.0 m.
+{"q":"A ramp is 10 m long and rises at 30° to the horizontal. How high is its top end, to 1 decimal place?","o":["3.3 m","5.0 m","8.7 m","10.0 m"],"c":1,"e":"Height = 10 × sin(30°) = 10 × 0.5 = 5.0 m.","needsDiagram":true,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"h*sin(theta)","vars":{"h":10,"theta":30}}}
+
+WORKED EXAMPLE — arithmetic (solve_for, linear equation):
+Question: "Solve for x: 3x + 5 = 20"
+x = 5, because 3×5 + 5 = 20.
+{"q":"Solve for x:  3x + 5 = 20","o":["3","5","7.5","15"],"c":1,"e":"3x = 15, so x = 5.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"solve_for","var":"x","lhs":"3*x+5","rhs":"20","candidates":[3,5,7.5,15]}}
+
+WORKED EXAMPLE — equation_balance (coefficient):
+Question: "Balance the equation: 2H₂ + O₂ → __ H₂O. What number goes in the gap?"
+2 balances it: 2H₂ + O₂ → 2H₂O.
+{"q":"Balance: 2H₂ + O₂ → __ H₂O. What number goes in the gap?","o":["1","2","3","4"],"c":1,"e":"2H₂ + O₂ → 2H₂O: 4 H and 2 O on each side.","needsDiagram":false,"diagramPrompt":null,"verify":"equation_balance","compute":{"op":"equation_balance","equation":"2 H2 + O2 -> ? H2O"}}
 
 WORKED EXAMPLE — arithmetic (closest to / nearest value):
 Question: "A number line shows 46, 49, 52 and 58. Which number is closest to 50?"
@@ -265,5 +319,6 @@ BAD diagramPrompt:
 Keep diagrams simple and focused. One chart, one shape, one scene. Not four things side by side.
 {{rejections}}{{exclusions}}
 
-Return ONLY a JSON array, no markdown, no backticks. Every object MUST include the "verify" field. Objects with verify "arithmetic" MUST include the "compute" object:
+Return ONLY a JSON array, no markdown, no backticks. Every object MUST include the "verify" field. Objects with verify "arithmetic" MUST include the "compute" object — single-op, formula, or solve_for; objects with verify "equation_balance" MUST include an equation_balance compute object:
 [{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist...","verify":"arithmetic","compute":{"op":"range","inputs":[1,2,3]}}]
+[{"q":"formula question","o":["A","B","C","D"],"c":1,"e":"explanation","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":{"a":6,"b":8}}}]
