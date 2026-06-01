@@ -1081,7 +1081,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
         <div class="cr-label">
           Answer format
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;cursor:pointer;">
-            <input type="checkbox" id="mc-toggle" checked onchange="S.multipleChoice=this.checked;document.getElementById('mc-hint').textContent=this.checked?'Child picks from 4 options.':'Child types their answer, then self-marks it.';" style="width:18px;height:18px;cursor:pointer;">
+            <input type="checkbox" id="mc-toggle" checked onchange="S.multipleChoice=this.checked;document.getElementById('mc-hint').textContent=this.checked?'Child picks from 4 options.':'Child types their answer; it is checked automatically.';" style="width:18px;height:18px;cursor:pointer;">
             Show multiple-choice options
           </label>
         </div>
@@ -1199,9 +1199,8 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
         style="width:100%;padding:14px;border:2px solid var(--border);border-radius:10px;font-family:var(--font);font-size:16px;outline:none;margin-bottom:12px;box-sizing:border-box;"
         onkeydown="if(event.key==='Enter'){event.preventDefault();revealFreeform();}">
       <button class="btn btn-primary" id="reveal-btn" onclick="revealFreeform()" style="width:100%;">Reveal answer →</button>
-      <div id="selfmark-row" style="display:none;gap:11px;margin-top:12px;">
-        <button class="btn btn-green" onclick="selfMark(true)" style="flex:1;">✓ I got it right</button>
-        <button class="btn btn-red" onclick="selfMark(false)" style="flex:1;">✗ I got it wrong</button>
+      <div id="freeform-override-row" style="display:none;margin-top:12px;">
+        <button class="btn btn-green" onclick="overrideCorrect()" style="width:100%;">Actually, I got it right ✓</button>
       </div>
     </div>
     <div class="explanation-box" id="explanation-box"></div>
@@ -4361,7 +4360,7 @@ function startTest(tutorialId) {
 
   // Apply answer-format setting from the tutorial (default true for legacy tutorials)
   const multipleChoice = t.multiple_choice !== false;
-  logAgent('orchestrator', `Answer format: ${multipleChoice ? 'multiple choice' : 'type & self-mark'} (from tutorial)`, '');
+  logAgent('orchestrator', `Answer format: ${multipleChoice ? 'multiple choice' : 'type & auto-grade'} (from tutorial)`, '');
 
   S.currentTest = {
     tutorialId: t.id,
@@ -4545,7 +4544,7 @@ function renderQuestion() {
     const revealBtn = document.getElementById('reveal-btn');
     revealBtn.disabled = false;
     revealBtn.style.display = 'block';
-    document.getElementById('selfmark-row').style.display = 'none';
+    document.getElementById('freeform-override-row').style.display = 'none';
     requestAnimationFrame(() => input.focus());
     return;
   }
@@ -4590,10 +4589,23 @@ function answerQuestion(idx, el) {
   nextBtn.style.display = 'flex';
 }
 
-// Free-form (type & self-mark) flow — used when the tutorial has multiple choice off.
-// revealFreeform() locks in the typed answer and shows the correct answer + explanation;
-// selfMark() records whether the child judged their own answer right or wrong.
+// Free-form (type & auto-grade) flow — used when the tutorial has multiple choice off.
+// The correct answer is always stored (q.o[q.c]), so revealFreeform() grades the typed
+// answer by a normalized text match. A clear mismatch (or blank) is marked wrong, with a
+// single "Actually, I got it right" override to recover a phrased-differently / spelling slip.
 let S_freeformTyped = '';
+
+// normalizeAnswer() is the single source of truth for comparing the typed answer to the
+// correct one: trim, lowercase, collapse internal whitespace, strip surrounding (not
+// internal) punctuation so values like "12.5" or "3,000" survive intact.
+function normalizeAnswer(s) {
+  return String(s == null ? '' : s)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s.,;:!?'"()\[\]]+|[\s.,;:!?'"()\[\]]+$/g, '');
+}
+
 function revealFreeform() {
   const test = S.currentTest;
   const q    = test.questions[test.currentIndex];
@@ -4605,14 +4617,25 @@ function revealFreeform() {
   revealBtn.disabled = true;
   revealBtn.style.display = 'none';
 
-  const expBox = document.getElementById('explanation-box');
-  expBox.textContent = `Answer: ${q.o[q.c]}. ${q.e || ''}`.trim();
-  expBox.className = 'explanation-box show';
+  const expBox    = document.getElementById('explanation-box');
+  const typedNorm = normalizeAnswer(S_freeformTyped);
+  const isCorrect = typedNorm !== '' && typedNorm === normalizeAnswer(q.o[q.c]);
 
-  document.getElementById('selfmark-row').style.display = 'flex';
+  if (isCorrect) {
+    expBox.textContent = `✓ Correct! Answer: ${q.o[q.c]}. ${q.e || ''}`.trim();
+    expBox.className = 'explanation-box show exp-correct';
+    finishFreeform(true, true);
+  } else {
+    expBox.textContent = `✗ Not quite. Your answer: ${S_freeformTyped || '(blank)'} — Correct answer: ${q.o[q.c]}. ${q.e || ''}`.trim();
+    expBox.className = 'explanation-box show exp-wrong';
+    finishFreeform(false, true);
+    document.getElementById('freeform-override-row').style.display = 'block';
+  }
 }
 
-function selfMark(gotIt) {
+// finishFreeform() records the free-form answer (keeping the `selected === correct`
+// scoring contract), plays the sound, and reveals the Next button.
+function finishFreeform(gotIt, autoGraded) {
   const test = S.currentTest;
   const q    = test.questions[test.currentIndex];
   test.answers.push({
@@ -4624,15 +4647,35 @@ function selfMark(gotIt) {
     explanation:   q.e || '',
     mode:          'free_form',
     typedAnswer:   S_freeformTyped,
+    autoGraded:    autoGraded,
     ...(q._bankId ? { _bankId: q._bankId } : {}),
   });
 
   if (gotIt) playCorrectSound(); else playWrongSound();
-  document.getElementById('selfmark-row').style.display = 'none';
 
   const nextBtn = document.getElementById('next-btn');
   nextBtn.textContent = test.currentIndex === test.questions.length - 1 ? 'See My Results →' : 'Next Question →';
   nextBtn.style.display = 'flex';
+}
+
+// overrideCorrect() flips the just-recorded (auto-wrong) answer to correct, for the case
+// where the child's answer matched in meaning but not in exact text.
+function overrideCorrect() {
+  const test = S.currentTest;
+  const q    = test.questions[test.currentIndex];
+  const a    = test.answers[test.answers.length - 1];
+  if (a && a.questionIndex === test.currentIndex) {
+    a.selected   = q.c;   // now scores as correct
+    a.overridden = true;
+  }
+
+  playCorrectSound();
+
+  const expBox = document.getElementById('explanation-box');
+  expBox.textContent = `✓ Correct! Answer: ${q.o[q.c]}. ${q.e || ''}`.trim();
+  expBox.className = 'explanation-box show exp-correct';
+
+  document.getElementById('freeform-override-row').style.display = 'none';
 }
 
 function nextQuestion() {
@@ -4745,7 +4788,7 @@ async function showResults() {
     const q = test.questions[i];
     const ok = a.selected === a.correct;
     const ansText = a.mode === 'free_form'
-      ? `You typed: ${a.typedAnswer || '(blank)'} · Correct: ${q.o[q.c]} · self-marked ${ok?'right':'wrong'}`
+      ? `You typed: ${a.typedAnswer || '(blank)'} · Correct: ${q.o[q.c]} · ${ok ? (a.overridden ? 'marked right' : 'correct') : 'incorrect'}`
       : (ok ? 'Correct' : 'Your answer: '+q.o[a.selected]+' · Correct: '+q.o[q.c]);
     return `<div class="breakdown-row">
       <span class="bd-icon">${ok?'✅':'❌'}</span>
@@ -4927,7 +4970,7 @@ function renderResultsHistory(results) {
       return `<div class="rhb-row">
         <div class="rhb-icon">${correct ? '✅' : '❌'}</div>
         <div class="rhb-content">
-          <div class="rhb-question">Q${qi+1}: ${question}${isFreeform ? ' <span style="color:var(--muted);font-weight:600;">(self-marked)</span>' : ''}</div>
+          <div class="rhb-question">Q${qi+1}: ${question}${isFreeform ? ' <span style="color:var(--muted);font-weight:600;">(typed answer)</span>' : ''}</div>
           <div class="rhb-answer">
             Your answer: <span style="color:${correct ? 'var(--green)' : 'var(--red)'}">${selectedText}</span>
             ${(!correct || isFreeform) ? ` &nbsp;·&nbsp; Correct answer: <span style="color:var(--green)">${correctText}</span>` : ''}
