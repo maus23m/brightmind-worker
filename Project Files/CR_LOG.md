@@ -1,6 +1,6 @@
 # BrightMind Change Request Log
 
-Last updated: 25 May 2026
+Last updated: 1 June 2026
 
 | ID | Description | Severity | Status |
 |---|---|---|---|
@@ -9,7 +9,7 @@ Last updated: 25 May 2026
 | CR-003 | Show test difficulty on test results history — display difficulty level (Easy/Medium/Hard) alongside topic name. | LOW | ✅ DONE (V2.13) |
 | CR-004 | Number duplicate topic tutorials — when same topic has multiple tutorials, label them sequentially (e.g. "Standard Form #1", "#2"). | LOW | ✅ DONE (V2.13) |
 | CR-005 | Children's Profiles page shows "undefined" next to avatar — avatar field null in database. Fix: fallback to 🧒 default. | LOW | ✅ DONE (V2.13) |
-| CR-006 | No loading/progress indicators on button clicks — buttons give no visual feedback when actions are processing. Add spinner or loading state. | MEDIUM | ✅ DONE (V2.14) — added `.btn-loading` spinner CSS + `setLoading`/`clearLoading` utilities; async handlers disable buttons and show progress text. |
+| CR-006 | No loading/progress indicators on button clicks — buttons give no visual feedback when actions are processing. Add spinner or loading state. | MEDIUM | ✅ DONE (V2.14, REOPENED & FIXED 1 Jun 2026) — original V2.14 work defined `.btn-loading` spinner CSS + `setLoading`/`clearLoading` utilities but **never wired them into any handler** (zero call sites), and the user-visible navigation gap (clicks on dashboard nav / wizard Next await Supabase round-trips with no feedback) was not addressed. Fix: top progress bar (`#nav-progress`) + global capture-phase click delegate that triggers `navStart()` on any nav-/async-triggering onclick (regex over handler names — `goTo*`, `wizNext`, `handleParentSignIn`, `confirmSave`, `saveChild`, `regenerate`, `replaceFlagged`, `recheckJob`, `startTest`, etc.). Cleared by `showScreen`/`showWizStep` on screen transition, by `showErr` on validation failure, by `showToast(_, 'error'\|'warn')` on action-failure toasts, and by an 8s failsafe. `body.nav-busy` also sets `cursor: progress`. Button-level `setLoading` utilities retained for handlers that already use textContent swaps. |
 | CR-007 | Tutorial generation progress lost when parent navigates away — no way to resume or see result. Need to persist generation state and show pending tutorials on return. | MEDIUM | ✅ DONE (V2.14) — job persisted to localStorage; dashboard banner shows generating/ready/failed state; banner re-entry resumes polling or shows completed questions; job retained until tutorial saved. |
 | CR-008 | Add child selection to tutorial setup page (Step 1) — parent should associate tutorial with a child upfront on the subject/year selection screen. | MEDIUM | ✅ DONE (V2.14) — child selector added to Step 1, auto-populated on year selection; validation requires child before proceeding. |
 | CR-009 | Show tutorial completion count per topic on topic selection page — if child already has tutorials for a topic, display progress (e.g. "2/3 completed") next to topic name. | LOW | ✅ DONE (V2.14) — per-topic progress badge on topic chips (green = all done, amber = partial, grey = none done). |
