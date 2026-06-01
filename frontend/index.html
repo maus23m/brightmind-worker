@@ -52,6 +52,11 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); min-
 .btn.btn-loading { position: relative; color: transparent !important; pointer-events: none; }
 .btn.btn-loading::after { content: ''; position: absolute; width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; top: 50%; left: 50%; margin-top: -9px; margin-left: -9px; }
 .btn-secondary.btn-loading::after { border-color: rgba(0,33,71,0.15); border-top-color: var(--oxford); }
+/* CR-006: top progress bar shown during navigation/async actions */
+#nav-progress { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: linear-gradient(90deg, var(--oxford), #4a90e2); z-index: 99999; opacity: 0; pointer-events: none; box-shadow: 0 0 8px rgba(0,33,71,0.55); transition: width 0.25s ease-out, opacity 0.25s; }
+#nav-progress.active { opacity: 1; }
+body.nav-busy { cursor: progress; }
+body.nav-busy .btn, body.nav-busy .nav-btn, body.nav-busy .quick-btn { cursor: progress; }
 .btn-primary { background: linear-gradient(135deg, var(--oxford), #004080); color: white; box-shadow: 0 4px 15px rgba(0,33,71,0.3); }
 .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,33,71,0.4); }
 .btn-secondary { background: var(--bg); color: var(--oxford); border: 2px solid var(--border); }
@@ -2210,6 +2215,7 @@ function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById(id);
   if (el) el.classList.add('active');
+  if (typeof navEnd === 'function') navEnd(); // CR-006: clear nav progress bar
   const screen = id.replace('screen-', '');
   setTimeout(() => {
     runTester(screen);
@@ -3175,6 +3181,7 @@ function goToWizard() {
 
 function showWizStep(n) {
   [1,2,3,4].forEach(i => document.getElementById(`wstep-${i}`)?.classList.toggle('hidden', i!==n));
+  if (typeof navEnd === 'function') navEnd(); // CR-006: clear nav progress bar
 }
 
 function updateWizardProgress(current) {
@@ -4769,13 +4776,15 @@ function closeModal(id) { document.getElementById(id)?.classList.add('hidden'); 
 // ════════════════════════════════════════════════════
 // FORM ERROR HELPERS
 // ════════════════════════════════════════════════════
-function showErr(id) { const el = document.getElementById(id); if (el) el.classList.add('show'); }
+function showErr(id) { const el = document.getElementById(id); if (el) el.classList.add('show'); if (typeof navEnd === 'function') navEnd(); /* CR-006: clear nav bar on validation failure */ }
 function hideErr(id) { const el = document.getElementById(id); if (el) el.classList.remove('show'); }
 
 // ════════════════════════════════════════════════════
 // TOAST
 // ════════════════════════════════════════════════════
 function showToast(msg, type='') {
+  // CR-006: error/warn toasts mean an in-progress action ended without navigating — clear the bar.
+  if ((type === 'error' || type === 'warn') && typeof navEnd === 'function') navEnd();
   const c = document.getElementById('toast-container');
   const t = document.createElement('div');
   t.className = `toast ${type}`;
@@ -4800,6 +4809,38 @@ function clearLoading(btn) {
   btn.disabled = false;
   btn.classList.remove('btn-loading');
   if (btn._origText) { btn.textContent = btn._origText; delete btn._origText; }
+}
+
+// CR-006: top progress bar for navigation/async feedback.
+// Started on click of any nav-triggering control via a global delegate (see boot);
+// cleared when the next screen/wizard-step renders, with a failsafe timeout.
+let _navProgGrow = null, _navProgFail = null;
+function navStart() {
+  let bar = document.getElementById('nav-progress');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'nav-progress';
+    document.body.appendChild(bar);
+  }
+  clearTimeout(_navProgGrow); clearTimeout(_navProgFail);
+  bar.style.transition = 'none';
+  bar.style.width = '0';
+  bar.classList.add('active');
+  document.body.classList.add('nav-busy');
+  // force reflow then animate to 70%, creep to 90%
+  void bar.offsetWidth;
+  bar.style.transition = '';
+  bar.style.width = '70%';
+  _navProgGrow = setTimeout(() => { bar.style.width = '90%'; }, 1200);
+  _navProgFail = setTimeout(() => navEnd(), 8000);
+}
+function navEnd() {
+  const bar = document.getElementById('nav-progress');
+  document.body.classList.remove('nav-busy');
+  if (!bar) return;
+  clearTimeout(_navProgGrow); clearTimeout(_navProgFail);
+  bar.style.width = '100%';
+  setTimeout(() => { bar.classList.remove('active'); bar.style.width = '0'; }, 180);
 }
 
 // ════════════════════════════════════════════════════
@@ -5870,6 +5911,17 @@ function formatDate(iso) {
 // ════════════════════════════════════════════════════
 (async function boot() {
   logAgent('orchestrator', 'BrightMind Tutor — Supabase edition initialising...', '');
+
+  // CR-006: global click delegate — start nav progress bar on any nav/async-triggering click.
+  // Cleared by showScreen / showWizStep when transition completes, or by an 8s failsafe.
+  const NAV_ONCLICK_RE = /goTo|goToWizard|goToDashboard|goToScreen|goToProgress|goToAnalytics|goToStudentHome|showScreen|showSignIn|showSignUp|showForgotPassword|wizNext|wizBack|handleParentSignIn|handleChildSignIn|handleSignUp|handleForgotPassword|handleSignOut|confirmSave|saveChild|regenerate|replaceFlagged|recheckJob|analyticsStartSession|submitRejection|startTest|deleteChild|deleteTutorial|confirmDeleteTutorial|switchAuthTab|dismissGetStarted/;
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[onclick]');
+    if (!t) return;
+    if (t.disabled) return;
+    const code = t.getAttribute('onclick') || '';
+    if (NAV_ONCLICK_RE.test(code)) navStart();
+  }, true);
 
   if (session.isValid) {
     logAgent('orchestrator', 'Stored token found — verifying with Supabase...', '');
