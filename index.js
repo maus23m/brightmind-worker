@@ -1,5 +1,6 @@
 // BrightMind V2 — GCP Cloud Function Worker
-// Pipeline: Bank → Generate (text only) → Compute Engine → Draw Diagrams (Claude SVG) → Audit → Child Agent → Bank Write
+// Pipeline: Bank → Generate (text only) → Compute Engine → Draw Diagrams (Claude SVG) → Review (Audit + Child Agent, one call) → Bank Write
+// CR-016: Audit and Child Agent merged into a single combined-prompt Claude call (Stage 4) — halves the model round-trips in the old stages 4–5.
 // Prompts loaded from /prompts/ directory — edit prompts without code changes.
 // DEF-033 fix: questions requiring diagrams are dropped if diagram generation fails (not served diagramless)
 // DEF-040 fix: diagram stage routed to a dedicated (stronger) model — diagram quality was a model gap,
@@ -308,78 +309,34 @@ async function processDiagrams(apiKey, qs, yr, subj) {
   return results;
 }
 
-// ── Stage 4: Audit Agent ──
+// ── Stage 4: Review (Audit + Child Agent merged — CR-016) ──
+// One Claude call drives both the curriculum auditor and the Year-N student check
+// (was two sequential calls). The combined prompt returns {audit, child} verdicts
+// per question; the pure merge logic lives in review.js so it stays unit-testable.
+const { buildReviewQuestions, applyReview } = require("./review");
 
-async function audit(apiKey, qs, yr, subj) {
+async function review(apiKey, qs, yr, subj) {
   if (!qs.length) return qs;
   try {
-    const template = loadPrompt("audit");
+    const template = loadPrompt("review");
     const prompt = fillTemplate(template, {
       year: String(yr),
       subject: subj,
       age_low: String(yr + 4),
       age_high: String(yr + 5),
-      // DEF-041: tell the auditor which questions the compute engine already verified,
-      // so criterion 4 does not re-judge arithmetic it is unreliable at.
-      questions_json: JSON.stringify(qs.map((q, i) => ({
-        i, q: q.q, o: q.o, c: q.c, e: q.e,
-        hasDiagram: !!q.svg,
-        // DEF-035: give the auditor the diagramPrompt so criterion 3 can catch
-        // question-diagram data mismatches (previously only a hasDiagram boolean).
-        diagramPrompt: q.diagramPrompt || null,
-        computeVerified: !!(q._computeVerified || q._computeCorrected),
-      }))),
+      questions_json: JSON.stringify(buildReviewQuestions(qs)),
     });
 
-    const raw = await callClaude(apiKey, prompt, 3000);
+    // 4000 tokens covers the auditor's rewrite headroom (was 3000) plus the small
+    // child payload (was 1500), in a single round-trip.
+    const raw = await callClaude(apiKey, prompt, 4000);
     const results = JSON.parse(raw.replace(/```json|```/g, "").trim());
 
-    return qs.map((q, i) => {
-      const r = results.find((x) => x.i === i);
-      if (!r) return q;
-      if (r.pass) return q;
-      if (r.rewrite && r.rewrite.q && Array.isArray(r.rewrite.o) && r.rewrite.o.length === 4 && typeof r.rewrite.c === "number") {
-        // DEF-041 guard: never let an audit rewrite silently override a
-        // compute-verified answer index. If the engine verified c, keep c.
-        const rw = { ...r.rewrite, e: r.rewrite.e || q.e, ...(q.svg ? { svg: q.svg } : {}), _auditRewritten: true };
-        if ((q._computeVerified || q._computeCorrected) && rw.c !== q.c) {
-          rw.c = q.c;
-          rw._auditCFixedToCompute = true;
-        }
-        return rw;
-      }
-      return { ...q, _auditFailed: true, _auditReason: r.reason || "failed" };
-    });
+    return applyReview(qs, results);
   } catch (e) {
-    console.error("Audit error:", e);
-    return qs;
-  }
-}
-
-// ── Stage 5: Child Agent ──
-
-async function childAgent(apiKey, qs, yr, subj) {
-  if (!qs.length) return qs;
-  try {
-    const template = loadPrompt("child_agent");
-    const prompt = fillTemplate(template, {
-      year: String(yr),
-      subject: subj,
-      age_low: String(yr + 4),
-      age_high: String(yr + 5),
-      questions_json: JSON.stringify(qs.map((q, i) => ({ i, q: q.q, o: q.o, hasDiagram: !!q.svg }))),
-    });
-
-    const raw = await callClaude(apiKey, prompt, 1500);
-    const results = JSON.parse(raw.replace(/```json|```/g, "").trim());
-
-    return qs.map((q, i) => {
-      const r = results.find((x) => x.i === i);
-      if (!r || r.pass) return q;
-      return { ...q, _childFailed: true, _childReason: r.reason || "flagged" };
-    });
-  } catch (e) {
-    console.error("Child agent error:", e);
+    // Fail-open, as the old audit()/childAgent() did: a model/parse error lets
+    // questions pass through rather than dropping the whole batch.
+    console.error("Review error:", e);
     return qs;
   }
 }
@@ -498,24 +455,20 @@ functions.http("worker", async (req, res) => {
     const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
     console.log(`[Job ${jobId}] Stage 3: ${withDiagrams.filter(q => q.svg).length} diagrams drawn, ${verified.length - withDiagrams.length} dropped (Claude SVG)`);
 
-    // Stage 4: Audit
-    const audited = await audit(apiKey, withDiagrams, yr, subject);
-    const auditPassed = audited.filter((q) => !q._auditFailed);
-    audited.filter((q) => q._auditFailed).forEach((q) =>
+    // Stage 4: Review (Audit + Child Agent merged in one model call — CR-016)
+    const reviewed = await review(apiKey, withDiagrams, yr, subject);
+    const passed = reviewed.filter((q) => !q._auditFailed && !q._childFailed);
+    // CR-019 feedback fidelity: keep both rejection categories distinct.
+    reviewed.filter((q) => q._auditFailed).forEach((q) =>
       pipelineRejections.push({ reason: "audit agent", note: q._auditReason || "audit failed", question_text: q.q || "" }));
-    console.log(`[Job ${jobId}] Stage 4: Audit ${auditPassed.length}/${audited.length} passed`);
-
-    // Stage 5: Child Agent
-    const childChecked = await childAgent(apiKey, auditPassed, yr, subject);
-    const childPassed = childChecked.filter((q) => !q._childFailed);
-    childChecked.filter((q) => q._childFailed).forEach((q) =>
+    reviewed.filter((q) => q._childFailed).forEach((q) =>
       pipelineRejections.push({ reason: "child agent", note: q._childReason || "child agent flagged", question_text: q.q || "" }));
-    console.log(`[Job ${jobId}] Stage 5: Child Agent ${childPassed.length}/${childChecked.length} passed`);
+    console.log(`[Job ${jobId}] Stage 4: Review ${passed.length}/${reviewed.length} passed (${reviewed.filter(q => q._auditFailed).length} audit-failed, ${reviewed.filter(q => q._childFailed).length} child-flagged)`);
 
     // Stage 6: Bank Write
-    await bankWrite(url, key, childPassed, subject, yr, topics, difficulty);
+    await bankWrite(url, key, passed, subject, yr, topics, difficulty);
 
-    let final = dedup([...bq, ...childPassed]);
+    let final = dedup([...bq, ...passed]);
 
     // Top-up
     if (final.length < count) {
