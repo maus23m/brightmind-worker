@@ -6,7 +6,8 @@
     "node": ">=22"
   },
   "scripts": {
-"start": "npx functions-framework --target=worker --port=8080"
+"start": "npx functions-framework --target=worker --port=8080",
+    "test": "node compute.test.js && node review.test.js"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^3.4.0"
