@@ -57,6 +57,9 @@ function dedup(qs) {
 }
 
 // callClaude — `model` param lets a stage override the default model (DEF-040).
+// `messages` may be a plain string (single user turn), or an array of
+// {role, content} where content is a string OR an array of content blocks
+// (text + image) — the latter powers the Stage 3.5 vision evaluator (CR-021).
 async function callClaude(apiKey, messages, maxTokens = 8000, system = null, model = MODEL) {
   const msgs = typeof messages === "string"
     ? [{ role: "user", content: messages }]
@@ -309,6 +312,80 @@ async function processDiagrams(apiKey, qs, yr, subj) {
   return results;
 }
 
+// ── Stage 3.5: Diagram Review (vision-based label correction — CR-021) ──
+// The Stage 3 drawing agent never sees the question/answer (its diagramPrompt is
+// self-contained), so it cannot tell when a label is irrelevant or leaks the
+// answer. This stage rasterizes each drawn SVG, shows the IMAGE plus the full
+// question context (q/options/answer/diagramPrompt) to the diagram model, and
+// gets back a corrected SVG with the offending labels removed and the necessary
+// ones kept. Pure shaping/parsing lives in diagram_review.js (unit-testable).
+const { Resvg } = require("@resvg/resvg-js");
+const { buildDiagramReviewInput, parseDiagramReviewResult } = require("./diagram_review");
+
+// Render an SVG string to a base64 PNG. Upscaled past the 800x600 viewBox so the
+// vision model can read small labels. loadSystemFonts pulls the fonts installed
+// in the Docker image (fonts-dejavu-core) — without them, text renders blank.
+function renderSvgToPng(svg) {
+  const r = new Resvg(svg, {
+    fitTo: { mode: "width", value: 1200 },
+    font: { loadSystemFonts: true },
+  });
+  return r.render().asPng().toString("base64");
+}
+
+async function evaluateDiagram(apiKey, q) {
+  const input = buildDiagramReviewInput(q);
+  const png = renderSvgToPng(input.svg);
+
+  const userTemplate = loadPrompt("diagram_review_user");
+  const userText = fillTemplate(userTemplate, {
+    question: input.question,
+    options: input.options.map((o, i) => `${i + 1}. ${o}`).join("  "),
+    answer: input.answer,
+    diagram_prompt: input.diagramPrompt || "(none provided)",
+    svg: input.svg,
+  });
+
+  const messages = [{
+    role: "user",
+    content: [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
+      { type: "text", text: userText },
+    ],
+  }];
+
+  const systemPrompt = loadPrompt("diagram_review_system");
+  const raw = await callClaude(apiKey, messages, 16000, systemPrompt, DIAGRAM_MODEL);
+  return parseDiagramReviewResult(raw, input.svg);
+}
+
+// Evaluate all drawn diagrams concurrently. Diagram-less questions pass through
+// untouched. unfixable -> drop the question (DEF-033 style) and record a
+// rejection note for the CR-019 top-up feedback loop. Any infra/parse error
+// fails OPEN (keep the original diagram), mirroring review()'s fail-open.
+async function evaluateDiagrams(apiKey, qs, rejectionsOut = []) {
+  const out = await Promise.all(qs.map(async (q) => {
+    if (!q.svg) return q;
+    try {
+      const res = await evaluateDiagram(apiKey, q);
+      if (res.verdict === "unfixable") {
+        console.error(`[DiagramReview] DROPPED — unsalvageable diagram. Question: "${(q.q || '').slice(0, 80)}"`);
+        rejectionsOut.push({ reason: "diagram review", note: "diagram could not be corrected (leaked answer or wrong scenario)", question_text: q.q || "" });
+        return { ...q, _diagramReviewFailed: true };
+      }
+      if (res.verdict === "corrected") {
+        console.log(`[DiagramReview] Corrected labels for: "${(q.q || '').slice(0, 80)}"`);
+        return { ...q, svg: res.svg, _diagramCorrected: true };
+      }
+      return q; // ok / error -> keep original diagram (fail-open on error)
+    } catch (e) {
+      console.error(`[DiagramReview] Error (keeping original): ${e.message}`);
+      return q;
+    }
+  }));
+  return out.filter((q) => !q._diagramReviewFailed);
+}
+
 // ── Stage 4: Review (Audit + Child Agent merged — CR-016) ──
 // One Claude call drives both the curriculum auditor and the Year-N student check
 // (was two sequential calls). The combined prompt returns {audit, child} verdicts
@@ -455,8 +532,12 @@ functions.http("worker", async (req, res) => {
     const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
     console.log(`[Job ${jobId}] Stage 3: ${withDiagrams.filter(q => q.svg).length} diagrams drawn, ${verified.length - withDiagrams.length} dropped (Claude SVG)`);
 
+    // Stage 3.5: Diagram Review (vision-based label correction — CR-021)
+    const evaluated = await evaluateDiagrams(apiKey, withDiagrams, pipelineRejections);
+    console.log(`[Job ${jobId}] Stage 3.5: DiagramReview ${evaluated.length}/${withDiagrams.length} kept (${evaluated.filter(q => q._diagramCorrected).length} corrected, ${withDiagrams.length - evaluated.length} dropped)`);
+
     // Stage 4: Review (Audit + Child Agent merged in one model call — CR-016)
-    const reviewed = await review(apiKey, withDiagrams, yr, subject);
+    const reviewed = await review(apiKey, evaluated, yr, subject);
     const passed = reviewed.filter((q) => !q._auditFailed && !q._childFailed);
     // CR-019 feedback fidelity: keep both rejection categories distinct.
     reviewed.filter((q) => q._auditFailed).forEach((q) =>
@@ -484,8 +565,10 @@ functions.http("worker", async (req, res) => {
         // DEF-041: top-up questions go through the compute engine too — reject failures.
         const topupVerified = verify(topup, subject).filter((q) => !q._computeFailed);
         const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject);
+        // Stage 3.5 on the top-up batch too (CR-021).
+        const topupEvaluated = await evaluateDiagrams(apiKey, topupWithDiagrams);
         const es = new Set(final.map((q) => q.q?.trim().toLowerCase().slice(0, 80)));
-        const fresh = dedup(topupWithDiagrams).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
+        const fresh = dedup(topupEvaluated).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
         final = [...final, ...fresh.slice(0, count - final.length)];
         await bankWrite(url, key, fresh, subject, yr, topics, difficulty);
       } catch (e) { console.error(`[Job ${jobId}] Top-up error:`, e.message); }
