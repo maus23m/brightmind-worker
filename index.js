@@ -19,6 +19,11 @@ const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messa
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
 // DEF-040: diagrams need a stronger model than text generation. Default to Opus 4.7.
 const DIAGRAM_MODEL = process.env.DIAGRAM_MODEL || "claude-opus-4-7";
+// CR-021 hotfix: Stage 3.5 (vision diagram review) is OPT-IN. It defaults OFF so the
+// pipeline behaves exactly as it did before CR-021 unless explicitly enabled in the
+// deploy env. Flip DIAGRAM_REVIEW_ENABLED=true (Cloud Run env var, no code change) to
+// turn it on once the rasterizer is confirmed working in the deployed image.
+const DIAGRAM_REVIEW_ENABLED = process.env.DIAGRAM_REVIEW_ENABLED === "true";
 
 // ── Prompt Loader ──
 
@@ -319,13 +324,33 @@ async function processDiagrams(apiKey, qs, yr, subj) {
 // question context (q/options/answer/diagramPrompt) to the diagram model, and
 // gets back a corrected SVG with the offending labels removed and the necessary
 // ones kept. Pure shaping/parsing lives in diagram_review.js (unit-testable).
-const { Resvg } = require("@resvg/resvg-js");
 const { buildDiagramReviewInput, parseDiagramReviewResult } = require("./diagram_review");
+
+// CR-021 hotfix: load the native rasterizer LAZILY (not at module top-level). A
+// missing or platform-incompatible native binding must NEVER stop the worker from
+// starting — that would fail every job (a crash at module load took the whole
+// pipeline down in the first CR-021 deploy). If it cannot load, Stage 3.5 degrades
+// to a no-op (diagrams pass through uncorrected) instead of crashing.
+let _Resvg = null, _resvgTried = false;
+function getResvg() {
+  if (_resvgTried) return _Resvg;
+  _resvgTried = true;
+  try {
+    _Resvg = require("@resvg/resvg-js").Resvg;
+  } catch (e) {
+    console.error(`[DiagramReview] rasterizer unavailable — Stage 3.5 will no-op: ${e.message}`);
+    _Resvg = null;
+  }
+  return _Resvg;
+}
 
 // Render an SVG string to a base64 PNG. Upscaled past the 800x600 viewBox so the
 // vision model can read small labels. loadSystemFonts pulls the fonts installed
 // in the Docker image (fonts-dejavu-core) — without them, text renders blank.
+// Returns null if the rasterizer is unavailable (caller keeps the original SVG).
 function renderSvgToPng(svg) {
+  const Resvg = getResvg();
+  if (!Resvg) return null;
   const r = new Resvg(svg, {
     fitTo: { mode: "width", value: 1200 },
     font: { loadSystemFonts: true },
@@ -336,6 +361,9 @@ function renderSvgToPng(svg) {
 async function evaluateDiagram(apiKey, q) {
   const input = buildDiagramReviewInput(q);
   const png = renderSvgToPng(input.svg);
+  // Rasterizer unavailable — cannot show the model an image, so keep the diagram
+  // as drawn (fail-open) rather than dropping or guessing.
+  if (!png) return { verdict: "ok" };
 
   const userTemplate = loadPrompt("diagram_review_user");
   const userText = fillTemplate(userTemplate, {
@@ -364,6 +392,9 @@ async function evaluateDiagram(apiKey, q) {
 // rejection note for the CR-019 top-up feedback loop. Any infra/parse error
 // fails OPEN (keep the original diagram), mirroring review()'s fail-open.
 async function evaluateDiagrams(apiKey, qs, rejectionsOut = []) {
+  // CR-021 hotfix: opt-in. When disabled, this stage is a pure no-op — the
+  // pipeline behaves exactly as it did before CR-021.
+  if (!DIAGRAM_REVIEW_ENABLED) return qs;
   const out = await Promise.all(qs.map(async (q) => {
     if (!q.svg) return q;
     try {
