@@ -11,6 +11,6 @@
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^3.4.0",
-    "@resvg/resvg-js": "^2.6.2"
+    "@resvg/resvg-wasm": "^2.6.2"
   }
 }
