@@ -326,41 +326,49 @@ async function processDiagrams(apiKey, qs, yr, subj) {
 // ones kept. Pure shaping/parsing lives in diagram_review.js (unit-testable).
 const { buildDiagramReviewInput, parseDiagramReviewResult } = require("./diagram_review");
 
-// CR-021 hotfix: load the native rasterizer LAZILY (not at module top-level). A
-// missing or platform-incompatible native binding must NEVER stop the worker from
-// starting — that would fail every job (a crash at module load took the whole
-// pipeline down in the first CR-021 deploy). If it cannot load, Stage 3.5 degrades
-// to a no-op (diagrams pass through uncorrected) instead of crashing.
-let _Resvg = null, _resvgTried = false;
-function getResvg() {
-  if (_resvgTried) return _Resvg;
-  _resvgTried = true;
-  try {
-    _Resvg = require("@resvg/resvg-js").Resvg;
-  } catch (e) {
+// CR-021a: rasterize with the pure-WASM build (@resvg/resvg-wasm), not the native
+// addon. The native binding failed to load in the Cloud Run image and took the whole
+// worker down on the first CR-021 deploy; WASM has no per-platform binary so it loads
+// identically everywhere. Init is async and must run ONCE before any render — we cache
+// the init promise so concurrent diagram renders share it. Loading stays lazy + guarded:
+// if it fails, Stage 3.5 degrades to a no-op (diagrams pass through) instead of crashing.
+// WASM has no system fonts, so fonts are supplied as buffers vendored under assets/.
+let _wasmInit = null;
+function ensureRasterizer() {
+  if (_wasmInit) return _wasmInit;
+  _wasmInit = (async () => {
+    const { initWasm, Resvg } = require("@resvg/resvg-wasm");
+    const wasm = fs.readFileSync(require.resolve("@resvg/resvg-wasm/index_bg.wasm"));
+    await initWasm(wasm);
+    const fonts = [
+      fs.readFileSync(path.join(__dirname, "assets", "DejaVuSans.ttf")),
+      fs.readFileSync(path.join(__dirname, "assets", "DejaVuSans-Bold.ttf")),
+    ];
+    return { Resvg, fonts };
+  })().catch((e) => {
     console.error(`[DiagramReview] rasterizer unavailable — Stage 3.5 will no-op: ${e.message}`);
-    _Resvg = null;
-  }
-  return _Resvg;
+    return null;
+  });
+  return _wasmInit;
 }
 
 // Render an SVG string to a base64 PNG. Upscaled past the 800x600 viewBox so the
-// vision model can read small labels. loadSystemFonts pulls the fonts installed
-// in the Docker image (fonts-dejavu-core) — without them, text renders blank.
-// Returns null if the rasterizer is unavailable (caller keeps the original SVG).
-function renderSvgToPng(svg) {
-  const Resvg = getResvg();
-  if (!Resvg) return null;
-  const r = new Resvg(svg, {
+// vision model can read small labels. Fonts come from vendored buffers (DejaVu Sans)
+// — without them, text renders blank. Returns null if the rasterizer is unavailable
+// (caller keeps the original SVG).
+async function renderSvgToPng(svg) {
+  const r = await ensureRasterizer();
+  if (!r) return null;
+  const img = new r.Resvg(svg, {
     fitTo: { mode: "width", value: 1200 },
-    font: { loadSystemFonts: true },
+    font: { fontBuffers: r.fonts, defaultFontFamily: "DejaVu Sans", loadSystemFonts: false },
   });
-  return r.render().asPng().toString("base64");
+  return img.render().asPng().toString("base64");
 }
 
 async function evaluateDiagram(apiKey, q) {
   const input = buildDiagramReviewInput(q);
-  const png = renderSvgToPng(input.svg);
+  const png = await renderSvgToPng(input.svg);
   // Rasterizer unavailable — cannot show the model an image, so keep the diagram
   // as drawn (fail-open) rather than dropping or guessing.
   if (!png) return { verdict: "ok" };
