@@ -1,6 +1,6 @@
 # BrightMind Defect Log
 
-Last updated: 27 May 2026
+Last updated: 5 June 2026
 
 ## Resolved
 
@@ -47,7 +47,7 @@ Last updated: 27 May 2026
 | DEF-033 | Diagram-dependent questions served without diagram. When drawDiagram fails, question served with needsDiagram=true but no svg. Fix: drop question, log diagnostic, top-up fills gap. | CRITICAL | IN-TEST | Orchestrator |
 | DEF-034 | Top-up questions skip audit and child agent. Stages 4 and 5 bypassed. Unaudited questions reach children. | MAJOR | OPEN | Orchestrator [Note 25 May 2026: the DEF-041 compute engine routes top-up questions through Stage 2 verification correctly — but DEF-034 (top-up bypassing audit + child agents) remains OPEN and is unaffected by that fix.] |
 | DEF-035 | Audit agent has no diagram awareness. Receives hasDiagram boolean but never sees diagramPrompt. Cannot catch diagram-question mismatches. | MAJOR | OPEN | Reviewer |
-| DEF-036 | All banked questions tagged with first topic only. q._topic never set during generation. bankWrite defaults to topics[0]. | MINOR | OPEN | Curriculum |
+| DEF-036 | All banked questions tagged with first topic only. q._topic never set during generation. bankWrite defaults to topics[0]. | MINOR | OPEN [Note 5 Jun 2026 (CR-022): questions now also carry a finer-grained `subtopic` label (generator-assigned, banked in the new `question_bank.subtopic` column, surfaced to the frontend). This is partial progress on coverage tagging, but the core defect stands: `q._topic` is still never set, so the bank `topic` column still defaults to `topics[0]` for multi-topic jobs.] | Curriculum |
 | DEF-037 | DIAGRAM_MAX_TOKENS env var not used. Code uses hardcoded 16000. | MINOR | RESOLVED (5 Jun 2026) — `index.js` now reads `MAX_TOKENS` (||8000) and `DIAGRAM_MAX_TOKENS` (||16000) as env-driven consts; `callClaude` defaults to `MAX_TOKENS` and the diagram stage passes `DIAGRAM_MAX_TOKENS` (the old hardcoded 16000 literal is gone). Fallbacks equal the previous values so an unset var changes nothing on deploy. Resolved caps are logged at job start (`maxTok=… diagMaxTok=…`) per the DEF-040 log-every-variable discipline. | Orchestrator |
 | DEF-038 | Nutrition & Digestion diagram example is decorative — labels organs but contains no question-specific data. Child cannot derive answer from diagram alone. Needs rewriting with measurable data. Same pattern may affect Cells example. | MEDIUM | OPEN | Designer |
 | DEF-040 | Diagram quality gap caused by model mismatch, not prompt. The pipeline diagram stage ran on Sonnet 4 (`claude-sonnet-4-20250514`) while the test "Diagram Engine" ran on a stronger model (Opus). The two were never a controlled comparison — model was an unlogged variable, so repeated diagram defects were wrongly attributed to prompt quality. Fix: dedicated `DIAGRAM_MODEL` env var (default `claude-opus-4-7`) used only for the diagram stage; question generation, audit and child agent stay on the default model. Model string now logged on every diagram call and at job start so it can never again be an invisible variable. Deployed 23 May 2026 — Cloud Run logs confirm diagram stage running on `claude-opus-4-7`. Awaiting comprehensive visual quality check before final close. Lesson: when comparing pipeline output against a test harness, log the model on both sides. | MAJOR | DEPLOYED — awaiting visual QA | Designer |
