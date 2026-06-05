@@ -86,5 +86,19 @@ const draw = read("diagram_system.txt");
     /\"inputs\":\[1,1,1,1\]/.test(gen) || /"inputs": \[1, 1, 1, 1\]/.test(gen));
 }
 
+// ── 6. question_gen: curriculum coverage / subtopic guidance ──
+{
+  check("gen: CURRICULUM COVERAGE section present",
+    /CURRICULUM COVERAGE/.test(gen));
+  check("gen: instructs spreading questions across sub-skills",
+    /spread/i.test(gen) && /sub-skill/i.test(gen));
+  check("gen: names expanding brackets as a sub-skill not to omit",
+    /EXPANDING SINGLE BRACKETS/.test(gen) && /EXPANDING DOUBLE BRACKETS/.test(gen));
+  check("gen: requires a subtopic field on every question",
+    /"subtopic" field/.test(gen));
+  check("gen: schema summary line includes a subtopic field",
+    /"subtopic":/.test(gen));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -10,6 +10,13 @@ PRINCIPLES:
 - Each question: under 60 words. Each explanation: under 25 words. 4 options, exactly 1 correct.
 - Simple, clear instructions with worked examples produce the best output. Show, don't describe. Every diagram type needs one complete example. No technical formatting rules — just tell the drawing agent what to draw like you're talking to a child that needs to draw it.
 
+CURRICULUM COVERAGE — SPREAD ACROSS SUBTOPICS:
+A topic name like "Expressions and Equations" is an umbrella over several distinct National-Curriculum sub-skills. A tutorial that drills only one of them (e.g. only "solving linear equations") silently leaves core sub-skills untaught. Before writing questions:
+1. Identify the distinct Year {{year}} sub-skills that make up each requested topic. For example, Year 7 "Expressions and Equations" includes: simplifying expressions, substitution, solving linear equations, EXPANDING SINGLE BRACKETS, EXPANDING DOUBLE BRACKETS, and factorising. Do NOT omit core procedural sub-skills like expanding brackets.
+2. Distribute the {{count}} questions ACROSS those sub-skills so the set spans the topic instead of clustering on one. If {{count}} is smaller than the number of sub-skills, cover as many DISTINCT sub-skills as possible (do not repeat one while leaving others untouched). If larger, balance roughly evenly across them.
+3. When several topics are requested, spread across the topics AND each topic's sub-skills.
+4. Every question MUST include a "subtopic" field: a short, specific sub-skill label naming what the question actually tests (e.g. "Expanding double brackets", "Solving linear equations", "Substitution"). Use the umbrella topic name only if no finer sub-skill applies. This label is shown to parents so they can see what the tutorial covers — make it accurate and specific.
+
 ANSWER VERIFICATION — READ CAREFULLY:
 Every question you produce will be checked by an automatic verifier before it reaches a child. To make that possible, every question MUST include a "verify" field that says how its answer can be checked. There are three values:
 
@@ -357,6 +364,6 @@ BAD diagramPrompt (count question):
 Keep diagrams simple and focused. One chart, one shape, one scene. Not four things side by side.
 {{rejections}}{{exclusions}}
 
-Return ONLY a JSON array, no markdown, no backticks. Every object MUST include the "verify" field. Objects with verify "arithmetic" MUST include the "compute" object — single-op, formula, or solve_for; objects with verify "equation_balance" MUST include an equation_balance compute object:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist...","verify":"arithmetic","compute":{"op":"range","inputs":[1,2,3]}}]
-[{"q":"formula question","o":["A","B","C","D"],"c":1,"e":"explanation","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":{"a":6,"b":8}}}]
+Return ONLY a JSON array, no markdown, no backticks. Every object MUST include the "verify" field AND the "subtopic" field (a short, specific sub-skill label — see CURRICULUM COVERAGE). Objects with verify "arithmetic" MUST include the "compute" object — single-op, formula, or solve_for; objects with verify "equation_balance" MUST include an equation_balance compute object:
+[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","subtopic":"Expanding single brackets","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist...","verify":"arithmetic","compute":{"op":"range","inputs":[1,2,3]}}]
+[{"q":"formula question","o":["A","B","C","D"],"c":1,"e":"explanation","subtopic":"Pythagoras' theorem","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":{"a":6,"b":8}}}]

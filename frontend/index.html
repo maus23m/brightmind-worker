@@ -248,6 +248,11 @@ body.nav-busy .btn, body.nav-busy .nav-btn, body.nav-busy .quick-btn { cursor: p
 .chip-gold { background: var(--gold-light); color: #8B6010; }
 .chip-green { background: var(--green-light); color: var(--green); }
 .chip-red { background: var(--red-light); color: var(--red); }
+.coverage-summary { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 4px 0 12px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.coverage-summary .cov-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-right: 2px; }
+.coverage-chip { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px; background: #EFF5FF; color: var(--oxford); }
+.coverage-chip .cov-count { font-weight: 800; opacity: .7; margin-left: 4px; }
+.qp-subtopic { display: inline-block; font-size: 11px; font-weight: 700; color: var(--cambridge); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
 .tfc-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
 .empty-state .es-icon { font-size: 48px; display: block; margin-bottom: 16px; }
@@ -1111,6 +1116,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
       </div>
 
       <div id="gen-preview" class="hidden">
+        <div id="gen-coverage" class="coverage-summary hidden"></div>
         <div class="gen-preview-nav">
           <span style="font-family:var(--mono);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;" id="preview-counter">Question 1 of 10</span>
           <div class="gen-dots" id="preview-dots"></div>
@@ -2170,6 +2176,12 @@ function runTester(screen) {
       ['BEHAVIOURAL', 'Diagram uses requestAnimationFrame',   () => renderQuestion.toString().includes('requestAnimationFrame')],
       ['BEHAVIOURAL', 'Diagram fails silently to text-only',  () => renderQuestion.toString().includes('text-only fallback')],
       ['BEHAVIOURAL', 'Curriculum Agent logs diagram result', () => renderQuestion.toString().includes('Diagram rendered')],
+      // Subtopic coverage transparency tests
+      ['STRUCTURAL',  'Coverage summary container present',   () => !!document.getElementById('gen-coverage')],
+      ['BEHAVIOURAL', 'renderCoverageSummary defined',        () => typeof renderCoverageSummary === 'function'],
+      ['BEHAVIOURAL', 'renderPreview refreshes coverage',     () => renderPreview.toString().includes('renderCoverageSummary')],
+      ['BEHAVIOURAL', 'Coverage counts by subtopic',          () => renderCoverageSummary.toString().includes('subtopic')],
+      ['BEHAVIOURAL', 'Preview card shows subtopic label',    () => renderPreview.toString().includes('qp-subtopic')],
     ],
   };
 
@@ -3981,6 +3993,7 @@ function renderPreview() {
       <div class="${cardClass}">
         ${actionBtn}
         <div class="qp-num">${isFlagged ? '🗑 Flagged for replacement' : `Question ${i+1}`}</div>
+        ${q.subtopic ? `<div class="qp-subtopic">${escapeHtml(q.subtopic)}</div>` : ''}
         <div class="qp-text">${q.q}</div>
         <div class="q-preview-opts">
           ${q.o.map((opt, j) => `<div class="q-preview-opt ${j===q.c?'correct':''}">${opt}${j===q.c?' ✓':''}</div>`).join('')}
@@ -3991,7 +4004,35 @@ function renderPreview() {
 
   document.getElementById('prev-q-btn').disabled = i === 0;
   document.getElementById('next-q-btn').disabled = i === qs.length - 1;
+  renderCoverageSummary();
   updateFlaggedButton();
+}
+
+// Curriculum coverage transparency: summarise which subtopics the tutorial spans.
+// Counts only non-flagged questions (flagged ones are pending replacement), so the
+// chips reflect what will actually be saved. Each question carries a `subtopic`
+// label from the worker; questions without one group under "Other".
+function renderCoverageSummary() {
+  const el = document.getElementById('gen-coverage');
+  if (!el) return;
+  const qs = (S.generatedQuestions || []).filter((_, idx) => !S_flagged.has(idx));
+  const counts = {};
+  qs.forEach((q) => {
+    const k = (q.subtopic && q.subtopic.trim()) ? q.subtopic.trim() : 'Other';
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  const keys = Object.keys(counts);
+  // Nothing meaningful to show if the worker supplied no subtopic labels at all.
+  if (!keys.length || (keys.length === 1 && keys[0] === 'Other')) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  el.classList.remove('hidden');
+  const chips = keys.sort((a, b) => counts[b] - counts[a]).map((k) =>
+    `<span class="coverage-chip">${escapeHtml(k)}<span class="cov-count">×${counts[k]}</span></span>`
+  ).join('');
+  el.innerHTML = `<span class="cov-title">Subtopics covered (${keys.length})</span>${chips}`;
 }
 
 function discardQuestion(idx) {

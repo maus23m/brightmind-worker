@@ -47,7 +47,9 @@ function applyReview(qs, results) {
     let out;
     if (a.pass === false) {
       if (a.rewrite && a.rewrite.q && Array.isArray(a.rewrite.o) && a.rewrite.o.length === 4 && typeof a.rewrite.c === "number") {
-        const rw = { ...a.rewrite, e: a.rewrite.e || q.e, ...(q.svg ? { svg: q.svg } : {}), _auditRewritten: true };
+        // Carry forward fields the rewrite payload doesn't include but must survive:
+        // the diagram (svg) and the curriculum-coverage label (subtopic).
+        const rw = { ...a.rewrite, e: a.rewrite.e || q.e, ...(q.svg ? { svg: q.svg } : {}), ...(q.subtopic ? { subtopic: q.subtopic } : {}), _auditRewritten: true };
         // DEF-041 guard: never let an audit rewrite silently override a
         // compute-verified answer index. If the engine verified c, keep c.
         if ((q._computeVerified || q._computeCorrected) && rw.c !== q.c) {
