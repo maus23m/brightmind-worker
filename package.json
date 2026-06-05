@@ -7,10 +7,9 @@
   },
   "scripts": {
     "start": "npx functions-framework --target=worker --port=8080",
-    "test": "node compute.test.js && node review.test.js && node diagram_review.test.js"
+    "test": "node compute.test.js && node review.test.js && node prompts.test.js"
   },
   "dependencies": {
-    "@google-cloud/functions-framework": "^3.4.0",
-    "@resvg/resvg-wasm": "^2.6.2"
+    "@google-cloud/functions-framework": "^3.4.0"
   }
 }
