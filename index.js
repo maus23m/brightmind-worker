@@ -151,7 +151,7 @@ async function adaptBank(url, key, subj, yr, topics, diff, cnt, prev, seen) {
     rows = rows.filter((r) => !ids.has(r.id));
     rows.sort(() => Math.random() - 0.5).slice(0, rem).forEach((r) => {
       ids.add(r.id);
-      c.push({ q: r.q, o: r.o, c: r.c, e: r.e, ...(r.svg ? { svg: r.svg } : {}), _fromBank: true, _bankId: r.id });
+      c.push({ q: r.q, o: r.o, c: r.c, e: r.e, ...(r.svg ? { svg: r.svg } : {}), ...(r.subtopic ? { subtopic: r.subtopic } : {}), _fromBank: true, _bankId: r.id });
     });
   }
   try {
@@ -234,6 +234,10 @@ async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections
       o: q.o,
       c: q.c,
       e: q.e || `Option ${q.c + 1}.`,
+      // Curriculum coverage: short sub-skill label the generator assigns to each
+      // question (e.g. "Expanding double brackets"). Carried through the pipeline,
+      // returned to the frontend (coverage summary), and banked. Null when absent.
+      subtopic: (typeof q.subtopic === "string" && q.subtopic.trim()) ? q.subtopic.trim() : null,
       needsDiagram: !!q.needsDiagram,
       diagramPrompt: q.diagramPrompt || null,
       // DEF-041: routing tag + structured working. Defaults keep legacy/non-numeric
@@ -356,7 +360,7 @@ async function bankWrite(url, key, qs, subj, yr, topics, diff) {
   const store = qs.filter((q) => !q._fromBank && !q._auditFailed && !q._childFailed && !q._computeFailed && q.q);
   if (!store.length) return;
   const rows = store.map((q) => ({
-    subject: subj, year_group: yr, topic: q._topic || topics[0], difficulty: diff,
+    subject: subj, year_group: yr, topic: q._topic || topics[0], subtopic: q.subtopic || null, difficulty: diff,
     q: q.q, o: q.o, c: q.c, e: q.e, ...(q.svg ? { svg: q.svg } : {}),
     audit_score: q._auditRewritten ? 0.7 : 0.9, source: "claude", content_hash: qh(q.q),
   }));
@@ -510,6 +514,9 @@ functions.http("worker", async (req, res) => {
     const cleanQuestions = final.map((q) => {
       const clean = { q: q.q, o: q.o, c: q.c, e: q.e };
       if (q.svg) clean.svg = q.svg;
+      // Curriculum coverage: surface the sub-skill label to the frontend so the
+      // review screen can show parents which subtopics the tutorial covers.
+      if (q.subtopic) clean.subtopic = q.subtopic;
       if (q._bankId) clean._bankId = q._bankId;
       if (q._fromBank) clean._fromBank = q._fromBank;
       return clean;
@@ -520,6 +527,14 @@ functions.http("worker", async (req, res) => {
       bank_supplied: bq.length, completed_at: new Date().toISOString(),
     });
 
+    // Curriculum coverage visibility: log how the final set spread across subtopics.
+    const coverage = cleanQuestions.reduce((m, q) => {
+      const k = q.subtopic || "(untagged)";
+      m[k] = (m[k] || 0) + 1;
+      return m;
+    }, {});
+    const coverageStr = Object.entries(coverage).map(([s, n]) => `${s}×${n}`).join(", ");
+    console.log(`[Job ${jobId}] Coverage: ${Object.keys(coverage).length} subtopic(s) — ${coverageStr}`);
     console.log(`[Job ${jobId}] Complete: ${final.length} questions (${bq.length} bank, ${final.length - bq.length} claude, ${cleanQuestions.filter(q => q.svg).length} diagrams)`);
     res.status(200).json({ status: "complete", count: final.length });
   } catch (e) {

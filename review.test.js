@@ -18,15 +18,23 @@ function check(name, cond) {
   check("both pass: no failure flags", !r._auditFailed && !r._childFailed && !r._auditRewritten);
 }
 
-// ── 2. Audit fail + valid rewrite → fields replaced, svg preserved ──
+// ── 2. Audit fail + valid rewrite → fields replaced, svg + subtopic preserved ──
 {
-  const q = { q: "old", o: ["a", "b", "c", "d"], c: 0, e: "old e", svg: "<svg/>" };
+  const q = { q: "old", o: ["a", "b", "c", "d"], c: 0, e: "old e", svg: "<svg/>", subtopic: "Expanding double brackets" };
   const rewrite = { q: "new", o: ["w", "x", "y", "z"], c: 2, e: "new e" };
   const [r] = applyReview([q], [{ i: 0, audit: { pass: false, reason: "x", rewrite }, child: { pass: true } }]);
   check("rewrite: q replaced", r.q === "new" && r.c === 2);
   check("rewrite: _auditRewritten set", r._auditRewritten === true);
   check("rewrite: svg preserved", r.svg === "<svg/>");
+  check("rewrite: subtopic preserved", r.subtopic === "Expanding double brackets");
   check("rewrite: not marked failed", !r._auditFailed);
+}
+
+// ── 2b. Pass-through preserves subtopic ──
+{
+  const q = { q: "q", o: ["a", "b", "c", "d"], c: 0, e: "e", subtopic: "Substitution" };
+  const [r] = applyReview([q], [{ i: 0, audit: { pass: true }, child: { pass: true } }]);
+  check("passthrough: subtopic preserved", r.subtopic === "Substitution");
 }
 
 // ── 2b. Audit rewrite missing e → defaults to original e ──
