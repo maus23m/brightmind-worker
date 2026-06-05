@@ -68,5 +68,23 @@ const draw = read("diagram_system.txt");
   }
 }
 
+// ── 5. question_gen: grid-area / count-squares rule and example ──
+{
+  check("gen: GRID-AREA / COUNT QUESTIONS rule present",
+    /GRID-AREA \/ COUNT QUESTIONS/.test(gen));
+  check("gen: count rule states draw what you count",
+    /draw what you count/i.test(gen));
+  check("gen: count rule requires row\/col position notation",
+    /row R col/i.test(gen));
+  check("gen: BAD count example flags shape-name-only diagramPrompt",
+    /L-shaped figure on it.*Mismatch/is.test(gen));
+  check("gen: count worked example uses op count",
+    /"op":"count"/.test(gen) || /"op": "count"/.test(gen));
+  check("gen: count worked example names squares by row and column",
+    /row \d+ col(umn)? \d+/i.test(gen));
+  check("gen: count worked example has inputs array matching named squares",
+    /\"inputs\":\[1,1,1,1\]/.test(gen) || /"inputs": \[1, 1, 1, 1\]/.test(gen));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
