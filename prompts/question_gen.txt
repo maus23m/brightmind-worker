@@ -131,6 +131,11 @@ Distances from 50: 46→4, 49→1, 52→2, 58→8. Nearest is 49. The two neares
 {"q":"A number line shows 46, 49, 52 and 58. Which number is closest to 50?","o":["46","49","52","58"],"c":1,"e":"49 is only 1 away from 50 — the smallest distance.","needsDiagram":true,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"closest_to","inputs":[46,49,52,58],"target":50}}
 WARNING: never make the two nearest candidates equally distant from the target (e.g. 48 and 52 both closest to 50) — that question has two correct answers and the verifier will reject it.
 
+WORKED EXAMPLE — arithmetic (count squares, grid area):
+Question: "How many squares does the orange shape cover on the grid?"
+The shape covers exactly 4 squares. List every covered square by row and column. Count = inputs.length = 4.
+{"q":"How many squares does the orange shape cover on the grid?","o":["3","4","5","6"],"c":1,"e":"Count the filled squares: 4 squares are shaded orange.","needsDiagram":true,"diagramPrompt":"Draw a 5×5 grid. Fill exactly 4 squares orange: the square at row 4 column 1, the square at row 4 column 2, the square at row 4 column 3, and the square at row 3 column 1. All other squares are white with a visible border.\nLabel the diagram with below information (and nothing more):\n1. Grid lines visible\n2. Filled squares coloured orange\n3. Title: 'How many squares are shaded?'\n4. Texts should be away from drawings (proportionally away but near)\n5. No overlaps between two objects unless its legit intersection","verify":"arithmetic","compute":{"op":"count","inputs":[1,1,1,1]}}
+
 WORKED EXAMPLE — none (science fact):
 {"q":"Which gas do plants release during photosynthesis?","o":["Carbon dioxide","Oxygen","Nitrogen","Hydrogen"],"c":1,"e":"Plants release oxygen as a by-product of photosynthesis.","needsDiagram":false,"diagramPrompt":null,"verify":"none"}
 
@@ -329,6 +334,25 @@ BAD diagramPrompt:
 "Draw the electromagnetic spectrum from left to right with waves getting shorter." ← Missing label whitelist.
 "Draw a coordinate grid. Plot point B at (3, -2). Label the diagram with below information (and nothing more): 1. Point B labelled 'B (3, -2)'" ← Gives away the coordinates, which is exactly what the question asks the child to find.
 "Draw a quarter circle in the top-right corner of a square. Show the radius line from the corner to the curved edge. The radius is 8 cm." ← A singular "radius line" described corner-to-curve reads as a DIAGONAL across the sector, not a radius. A quarter circle has TWO radii, one along each straight edge, meeting at the centre at a right angle, with an arc joining their far ends — describe and label both radii and mark the right angle.
+
+GRID-AREA / COUNT QUESTIONS — SPECIAL RULE:
+For any question where the child must COUNT discrete items shown in a diagram (filled grid squares, tiles, dots in an array), the diagramPrompt MUST name every single item by its exact position. The number of items named in the prose MUST equal inputs.length in the compute block. The drawing agent has NO knowledge of the compute block — it draws only what the prose describes. If you name 4 squares in the prose but inputs has 9 entries, the diagram will show 4 and the answer will say 9. That is the bug.
+
+Rule: count what you draw, draw what you count.
+
+For grid-area questions, describe each filled square using "row R col C" notation (row 1 = top row, column 1 = leftmost column). List ALL of them explicitly in the prose before the label whitelist. Do NOT use shape names alone ("an L-shape", "a T-shape") — a shape name gives the drawing agent artistic freedom to draw a different number of squares than inputs.length.
+
+Good count diagramPrompt:
+"Draw a 5×5 grid. Fill exactly 9 squares orange: row 1 col 1, row 1 col 2, row 1 col 3, row 2 col 1, row 2 col 2, row 2 col 3, row 3 col 1, row 3 col 2, row 3 col 3. All other squares are white with a visible border.
+Label the diagram with below information (and nothing more):
+1. Grid lines visible
+2. Filled squares coloured orange
+3. Title: 'How many squares are shaded?'
+4. Texts should be away from drawings (proportionally away but near)
+5. No overlaps between two objects unless its legit intersection"
+
+BAD diagramPrompt (count question):
+"Draw a 5×5 grid with an orange L-shaped figure on it." ← No count, no positions. Drawing agent draws whatever L-shape it wants — could be 3, 4, or 7 squares. Mismatch guaranteed.
 
 Keep diagrams simple and focused. One chart, one shape, one scene. Not four things side by side.
 {{rejections}}{{exclusions}}
