@@ -39,6 +39,24 @@
   .signin { max-width:360px; margin:80px auto; }
   .signin .card > * + * { margin-top:12px; }
   .muted { color:var(--muted); font-size:12px; }
+  /* tabs */
+  .tabs { display:flex; gap:8px; margin-bottom:20px; }
+  .tab { padding:8px 16px; border-radius:7px; background:transparent; color:var(--muted); border:1px solid var(--line); cursor:pointer; font-weight:600; }
+  .tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  /* curriculum */
+  .prop { border:1px solid var(--line); border-radius:9px; padding:16px; margin-bottom:16px; }
+  .prop h3 { margin:0 0 4px; font-size:15px; }
+  .ss { display:flex; align-items:center; gap:10px; padding:6px 0; border-top:1px solid var(--line); }
+  .ss:first-of-type { border-top:none; }
+  .ss input[type=text] { flex:1; }
+  .ss input[type=checkbox] { width:16px; height:16px; }
+  .badge { font-size:11px; border-radius:5px; padding:1px 7px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+  .badge.disputed { color:#e8b339; border-color:#e8b33955; background:#e8b33914; }
+  .badge.agreed { color:var(--ok); border-color:#4caf7855; }
+  .mis { font-size:12px; color:var(--muted); padding:4px 0; display:flex; gap:8px; align-items:flex-start; }
+  .prop .actions { margin-top:14px; display:flex; gap:10px; }
+  .prop .actions button.reject { background:transparent; border:1px solid var(--danger); color:var(--danger); }
+  .addss { display:flex; gap:8px; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -60,17 +78,36 @@
     <div><span class="who" id="who"></span> &nbsp; <button class="secondary" id="signout-btn">Sign out</button></div>
   </header>
   <main>
+    <div class="tabs">
+      <button class="tab active" id="tab-config" data-pane="config">Runtime config</button>
+      <button class="tab" id="tab-curriculum" data-pane="curriculum">Curriculum</button>
+    </div>
     <div id="global-msg"></div>
 
-    <div class="card">
-      <h2>Runtime config</h2>
-      <p class="muted" style="margin-top:-8px">Live dials the worker reads each job. Empty/absent keys fall back to the deploy defaults. Every save is recorded below.</p>
-      <div id="config-list">Loading…</div>
+    <div id="pane-config">
+      <div class="card">
+        <h2>Runtime config</h2>
+        <p class="muted" style="margin-top:-8px">Live dials the worker reads each job. Empty/absent keys fall back to the deploy defaults. Every save is recorded below.</p>
+        <div id="config-list">Loading…</div>
+      </div>
+
+      <div class="card">
+        <h2>Recent changes</h2>
+        <div id="audit-list">Loading…</div>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>Recent changes</h2>
-      <div id="audit-list">Loading…</div>
+    <div id="pane-curriculum" class="hidden">
+      <div class="card">
+        <h2>Proposals awaiting review</h2>
+        <p class="muted" style="margin-top:-8px">Maximum-recall sweep output. Untick a sub-strand to prune it, edit a name inline, or add one. Approve freezes a versioned, stamped object the worker reads; nothing reaches a child until approved.</p>
+        <div id="proposal-list">Loading…</div>
+      </div>
+
+      <div class="card">
+        <h2>Approved objects (live)</h2>
+        <div id="approved-list">Loading…</div>
+      </div>
     </div>
   </main>
 </div>
@@ -138,7 +175,18 @@ const supabase = (() => {
     },
   });
 
-  return { auth, from };
+  // Call a Postgres function (RPC) — used for the atomic approve_curation_proposal.
+  async function rpc(fn, params, token = null) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || `RPC ${res.status}`); }
+    return res.json();
+  }
+
+  return { auth, from, rpc };
 })();
 
 // ── Session ──
@@ -192,6 +240,8 @@ async function showAdmin() {
   $('signin-view').classList.add('hidden');
   $('admin-view').classList.remove('hidden');
   $('who').textContent = session.email || '';
+  curriculumLoaded = false;
+  switchPane('config');
   await Promise.all([loadConfig(), loadAudit()]);
 }
 
@@ -258,6 +308,163 @@ async function loadAudit() {
   }
 }
 
+// ── Tabs ──
+let curriculumLoaded = false;
+function switchPane(name) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.pane === name));
+  $('pane-config').classList.toggle('hidden', name !== 'config');
+  $('pane-curriculum').classList.toggle('hidden', name !== 'curriculum');
+  if (name === 'curriculum' && !curriculumLoaded) {
+    curriculumLoaded = true;
+    Promise.all([loadProposals(), loadApprovedObjects()]);
+  }
+}
+
+// ── Curriculum: proposals awaiting review ──
+const proposalsById = {};
+async function loadProposals() {
+  const box = $('proposal-list');
+  try {
+    const rows = await supabase.from('curation_proposals').select(
+      'id,subject,topic,year_group,scheme,proposed_payload,created_at',
+      'status=eq.pending_review&order=created_at.desc', session.token);
+    if (!rows.length) { box.innerHTML = '<p class="muted">No proposals awaiting review. Run the sweep to generate one.</p>'; return; }
+    rows.forEach((p) => { proposalsById[p.id] = p; });
+    box.innerHTML = rows.map(renderProposal).join('');
+    box.querySelectorAll('.approve').forEach((b) => b.addEventListener('click', approveProposal));
+    box.querySelectorAll('.reject').forEach((b) => b.addEventListener('click', rejectProposal));
+    box.querySelectorAll('.add-ss-btn').forEach((b) => b.addEventListener('click', addStrand));
+  } catch (e) {
+    box.innerHTML = `<div class="msg err">Could not load proposals: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderProposal(p) {
+  const pl = p.proposed_payload || {};
+  const subs = Array.isArray(pl.sub_strands) ? pl.sub_strands : [];
+  const misc = Array.isArray(pl.misconceptions) ? pl.misconceptions : [];
+  const subRows = subs.map((s, i) => `
+    <div class="ss" data-idx="${i}">
+      <input type="checkbox" class="ss-keep" checked title="Untick to prune">
+      <input type="text" class="ss-name" value="${esc(s.name)}">
+      <span class="badge ${s.year_flag === 'disputed' ? 'disputed' : 'agreed'}">${esc(s.year_flag || 'agreed')}</span>
+      <span class="badge">${esc((s.provenance || []).join(', ') || '—')}</span>
+    </div>`).join('');
+  const misRows = misc.length ? `<h2 style="margin-top:16px">Misconceptions</h2>` + misc.map((m, i) => `
+    <div class="mis" data-idx="${i}">
+      <input type="checkbox" class="mis-keep" checked title="Untick to prune">
+      <span><b>${esc(m.sub_strand || '')}</b> — wrong "${esc(m.wrong || '')}"${m.correct ? ' → correct: ' + esc(m.correct) : ''}</span>
+    </div>`).join('') : '';
+  return `
+    <div class="prop" data-id="${esc(p.id)}">
+      <h3>${esc(p.topic)} <span class="muted">· ${esc(p.subject)} · Year ${esc(p.year_group)} · ${esc(p.scheme || 'NC')}</span></h3>
+      <p class="muted">${subs.length} sub-strands proposed (maximum recall — prune what doesn't belong)</p>
+      ${subRows}
+      <div class="addss">
+        <input type="text" class="add-ss-input" placeholder="Add a sub-strand…">
+        <button class="secondary add-ss-btn" type="button">Add</button>
+      </div>
+      ${misRows}
+      <div class="actions">
+        <button class="approve">Approve &amp; freeze</button>
+        <button class="reject" type="button">Reject</button>
+      </div>
+    </div>`;
+}
+
+// Append an entered sub-strand as a kept row (so "add" joins the maximum-recall set).
+function addStrand(ev) {
+  const wrap = ev.target.closest('.addss');
+  const input = wrap.querySelector('.add-ss-input');
+  const name = input.value.trim();
+  if (!name) return;
+  const row = document.createElement('div');
+  row.className = 'ss ss-new';
+  row.innerHTML = `<input type="checkbox" class="ss-keep" checked>
+    <input type="text" class="ss-name" value="${esc(name)}">
+    <span class="badge agreed">added</span><span class="badge">manual</span>`;
+  wrap.parentNode.insertBefore(row, wrap);
+  input.value = '';
+}
+
+// Rebuild the payload from the (pruned/edited/added) DOM, starting from the cached original.
+function buildEditedPayload(propEl) {
+  const orig = proposalsById[propEl.dataset.id].proposed_payload || {};
+  const origSubs = Array.isArray(orig.sub_strands) ? orig.sub_strands : [];
+  const sub_strands = [];
+  propEl.querySelectorAll('.ss').forEach((row) => {
+    if (!row.querySelector('.ss-keep').checked) return; // pruned
+    const name = (row.querySelector('.ss-name').value || '').trim();
+    if (!name) return;
+    if (row.dataset.idx !== undefined) {
+      sub_strands.push({ ...origSubs[+row.dataset.idx], name });
+    } else {
+      sub_strands.push({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''), name, provenance: ['manual'], year_flag: 'agreed' });
+    }
+  });
+  const keptIds = new Set(sub_strands.map((s) => s.id));
+  const misconceptions = [];
+  propEl.querySelectorAll('.mis').forEach((row) => {
+    if (row.querySelector('.mis-keep').checked) misconceptions.push((orig.misconceptions || [])[+row.dataset.idx]);
+  });
+  const prerequisites = (orig.prerequisites || []).filter((pr) => keptIds.has(pr.sub_strand));
+  return { sub_strands, prerequisites, misconceptions };
+}
+
+async function approveProposal(ev) {
+  const propEl = ev.target.closest('.prop');
+  const id = propEl.dataset.id;
+  const payload = buildEditedPayload(propEl);
+  if (!payload.sub_strands.length) { showMsg($('global-msg'), 'err', 'Keep at least one sub-strand before approving.'); return; }
+  ev.target.disabled = true;
+  showMsg($('global-msg'), 'ok', '');
+  try {
+    await supabase.rpc('approve_curation_proposal',
+      { proposal_id: id, edited_payload: payload, approver: session.email }, session.token);
+    showMsg($('global-msg'), 'ok', `Approved ${proposalsById[id].topic} (${payload.sub_strands.length} sub-strands frozen).`);
+    await Promise.all([loadProposals(), loadApprovedObjects(), loadAudit()]);
+  } catch (e) {
+    showMsg($('global-msg'), 'err', `Approve failed: ${e.message}`);
+    ev.target.disabled = false;
+  }
+}
+
+async function rejectProposal(ev) {
+  const id = ev.target.closest('.prop').dataset.id;
+  ev.target.disabled = true;
+  try {
+    await supabase.from('curation_proposals').update({ status: 'rejected' }, `id=eq.${id}`, session.token);
+    showMsg($('global-msg'), 'ok', 'Proposal rejected.');
+    await loadProposals();
+  } catch (e) {
+    showMsg($('global-msg'), 'err', `Reject failed: ${e.message}`);
+    ev.target.disabled = false;
+  }
+}
+
+// ── Curriculum: approved objects (read-only) ──
+async function loadApprovedObjects() {
+  const box = $('approved-list');
+  try {
+    const rows = await supabase.from('curriculum_objects').select(
+      'subject,topic,year_group,version,payload,approved_by,approved_at',
+      'status=eq.approved&order=subject.asc&order=topic.asc', session.token);
+    if (!rows.length) { box.innerHTML = '<p class="muted">No approved objects yet.</p>'; return; }
+    box.innerHTML = `<table><thead><tr><th>Subject</th><th>Topic</th><th>Year</th><th>v</th><th>Sub-strands</th><th>Approver</th><th>When</th></tr></thead><tbody>${
+      rows.map((r) => `<tr>
+        <td>${esc(r.subject)}</td>
+        <td>${esc(r.topic)}</td>
+        <td>${esc(r.year_group)}</td>
+        <td>${esc(r.version)}</td>
+        <td>${esc((r.payload && r.payload.sub_strands || []).length)}</td>
+        <td>${esc(r.approved_by || '—')}</td>
+        <td>${esc((r.approved_at || '').slice(0, 19).replace('T', ' '))}</td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="msg err">Could not load approved objects: ${esc(e.message)}</div>`;
+  }
+}
+
 // ── Sign-in flow ──
 async function doSignIn() {
   const email = $('email').value.trim(), password = $('password').value;
@@ -289,6 +496,7 @@ async function boot() {
   $('signin-btn').addEventListener('click', doSignIn);
   $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSignIn(); });
   $('signout-btn').addEventListener('click', doSignOut);
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchPane(t.dataset.pane)));
 
   if (!session.token) { showSignin(); return; }
   let user = await supabase.auth.getUser(session.token);

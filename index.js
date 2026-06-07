@@ -14,6 +14,8 @@
 
 const fs = require("fs");
 const path = require("path");
+// Curriculum curation (Slice 2): pure steering logic shared with the offline sweep.
+const { buildCurriculumGuidance } = require("./curriculum");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
@@ -157,6 +159,27 @@ async function getConfig(url, key, configKey, fallback, fetcher = supaFetch) {
   }
 }
 
+// ── Curriculum read (admin backend — Slice 2) ──
+// Fetch the APPROVED curriculum_objects for the requested topics so generation can be
+// steered by human-signed-off sub-strands. Returns the matching rows (the pure
+// latest-version-per-topic + guidance shaping lives in curriculum.js). Any error or no
+// match → [] → the generator falls back to its own sub-skill enumeration (no behaviour
+// change). The worker uses the service-role key (bypasses RLS).
+async function getApprovedCurriculum(url, key, subject, yr, topics) {
+  if (!Array.isArray(topics) || topics.length === 0) return [];
+  try {
+    const inList = topics.map((t) => `"${String(t).replace(/"/g, '\\"')}"`).join(",");
+    const rows = await supaFetch(url, key,
+      `curriculum_objects?status=eq.approved&subject=eq.${encodeURIComponent(subject)}` +
+      `&year_group=eq.${yr}&topic=in.(${encodeURIComponent(inList)})` +
+      `&select=topic,year_group,version,status,payload&order=version.desc`);
+    return Array.isArray(rows) ? rows : [];
+  } catch (e) {
+    console.error(`[Curriculum] read failed, falling back to self-enumeration: ${e.message}`);
+    return [];
+  }
+}
+
 // ── Stage 0: Bank Read ──
 
 async function getSeen(url, key, childId, topics) {
@@ -237,7 +260,7 @@ async function getRecentRejections(url, key, subj, yr) {
 
 // ── Stage 1: Generate questions (TEXT ONLY) ──
 
-function buildPrompt(subj, yr, topics, diff, n, excl, rejections = []) {
+function buildPrompt(subj, yr, topics, diff, n, excl, rejections = [], curriculum = "") {
   const exStr = excl.length ? `\nDo NOT repeat these questions:\n${excl.map((q, i) => `${i + 1}. ${q}`).join("\n")}` : "";
 
   let rejStr = "";
@@ -271,13 +294,16 @@ function buildPrompt(subj, yr, topics, diff, n, excl, rejections = []) {
     difficulty: diff,
     age_low: String(yr + 4),
     age_high: String(yr + 5),
+    // Slice 2: approved-curriculum steering block (empty string → self-enumeration fallback).
+    curriculum: curriculum,
     rejections: rejStr,
     exclusions: exStr,
   });
 }
 
-async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = [], cfg = CONFIG_DEFAULTS) {
-  const prompt = buildPrompt(subj, yr, topics, diff, n, excl, rejections);
+async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = [], cfg = CONFIG_DEFAULTS, curriculum = []) {
+  const guidance = buildCurriculumGuidance(curriculum);
+  const prompt = buildPrompt(subj, yr, topics, diff, n, excl, rejections, guidance);
   const raw = await callClaude(apiKey, prompt, cfg.maxTokens, null, cfg.model);
   const qs = JSON.parse(raw.replace(/```json|```/g, "").trim());
   if (!Array.isArray(qs) || !qs.length) throw new Error("Empty generation");
@@ -490,6 +516,13 @@ functions.http("worker", async (req, res) => {
     const src = (k) => (configCache[k]?.fromConfig ? "config" : "default");
     console.log(`[Job ${jobId}] Starting: ${subject} Y${yr} ${topics.join(",")} ${difficulty} x${count} | text=${cfg.model}(${src("CLAUDE_MODEL")}) diagram=${cfg.diagramModel}(${src("DIAGRAM_MODEL")}) | maxTok=${cfg.maxTokens}(${src("MAX_TOKENS")}) diagMaxTok=${cfg.diagMaxTokens}(${src("DIAGRAM_MAX_TOKENS")})`);
 
+    // Slice 2: resolve approved curriculum objects for the requested topics. Steers
+    // generation toward human-signed-off sub-strands; topics with no approved object
+    // fall back to the generator's own enumeration (no behaviour change).
+    const curriculum = await getApprovedCurriculum(url, key, subject, yr, topics);
+    const covered = new Set(curriculum.filter((c) => c.status === "approved").map((c) => c.topic));
+    console.log(`[Job ${jobId}] Curriculum: ${covered.size}/${topics.length} topic(s) steered by approved objects${covered.size ? ` (${[...covered].join(", ")})` : ""}, ${topics.length - covered.size} self-enumerated`);
+
     // Stage 0: Bank
     let seen = new Set(), recent = [];
     if (childId) { const d = await getSeen(url, key, childId, topics); seen = d.h; recent = d.t; }
@@ -508,7 +541,7 @@ functions.http("worker", async (req, res) => {
     const excl = [...recent, ...bq.map((q) => q.q?.trim().slice(0, 80)).filter(Boolean)];
     const rejections = await getRecentRejections(url, key, subject, yr);
     if (rejections.length) console.log(`[Job ${jobId}] Loaded ${rejections.length} parent rejections for feedback`);
-    let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl, rejections, cfg);
+    let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl, rejections, cfg, curriculum);
     if (seen.size) generated = generated.filter((q) => !seen.has(qh(q.q)));
     console.log(`[Job ${jobId}] Stage 1: Generated ${generated.length} (${generated.filter(q => q.needsDiagram).length} need diagrams)`);
 
@@ -558,7 +591,7 @@ functions.http("worker", async (req, res) => {
         const topupRejections = [...rejections, ...pipelineRejections];
         if (pipelineRejections.length)
           console.log(`[Job ${jobId}] Top-up: feeding back ${pipelineRejections.length} pipeline rejection reason(s)`);
-        const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl, topupRejections, cfg);
+        const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl, topupRejections, cfg, curriculum);
         // DEF-041: top-up questions go through the compute engine too — reject failures.
         const topupVerified = verify(topup, subject).filter((q) => !q._computeFailed);
         const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject, cfg);

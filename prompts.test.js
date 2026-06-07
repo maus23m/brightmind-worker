@@ -100,5 +100,22 @@ const draw = read("diagram_system.txt");
     /"subtopic":/.test(gen));
 }
 
+// ── 5. Slice 2: curriculum steering placeholder + fallback wording ──
+{
+  check("gen: has the {{curriculum}} steering placeholder",
+    /\{\{curriculum\}\}/.test(gen));
+  check("gen: approved curriculum is treated as authoritative",
+    /APPROVED CURRICULUM block appears above/i.test(gen) && /authoritative/i.test(gen));
+  check("gen: self-enumeration is the explicit fallback",
+    /Otherwise \(no approved block/i.test(gen));
+
+  const sweep = read("curriculum_sweep.txt");
+  check("sweep: instructs MAXIMUM RECALL union", /maximum recall/i.test(sweep));
+  check("sweep: asks for provenance + year-disagreement flags",
+    /provenance/i.test(sweep) && /year_flag/i.test(sweep));
+  check("sweep: carries a complete worked-example payload (sub_strands JSON)",
+    /"sub_strands"/.test(sweep) && /"misconceptions"/.test(sweep));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

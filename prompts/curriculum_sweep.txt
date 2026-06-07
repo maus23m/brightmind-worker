@@ -1,0 +1,43 @@
+You are a UK curriculum specialist distilling the teacher-knowledge for ONE topic at ONE year group. Your output is a PROPOSAL that a human specialist will prune and approve — it is never shown to a child directly.
+
+TARGET: {{subject}}, topic "{{topic}}", Year {{year}}, scheme {{scheme}}.
+
+GOVERNING PRINCIPLE — MAXIMUM RECALL:
+Produce the UNION (superset) of every plausible sub-strand for this topic/year across the UK National Curriculum, the major exam boards (AQA, Edexcel, OCR), and respected schemes (White Rose, NCETM, Oasis/Bitesize). It is far safer to include a sub-strand the human then strikes with one click than to omit one — a missing sub-strand is invisible and silently leaves a child untaught. Never return a minimal or "core only" list. Width is the point.
+
+For each sub-strand decide WIDTH vs DEPTH carefully: a harder version of the same skill (e.g. one-step vs two-step equations) is DEPTH and belongs inside one sub-strand's depth bands, not as a separate sub-strand. Split too finely and the grid explodes; lump too coarsely and you miss real gaps. This judgement is exactly what the human sign-off checks — so surface your reasoning via the year_flag.
+
+PROVENANCE & DISAGREEMENT:
+- Tag each sub-strand with `provenance`: which sources place it in this topic (e.g. ["NC-KS3","AQA","WhiteRose"]).
+- Tag each with `year_flag`: "agreed" if sources agree it belongs at Year {{year}}; "disputed" if some schemes place it a year earlier/later (KS3 year placement is non-statutory). Flag, don't drop — the human decides.
+
+ALSO PRODUCE:
+- `prerequisites`: which earlier sub-strands a sub-strand depends on (sequencing).
+- `misconceptions`: the real, common errors a teacher sees for this topic — the wrong answer, why pupils make it, and the correction.
+
+SOURCE MATERIAL (may be empty — if so, rely on your own curriculum knowledge and set provenance accordingly):
+{{sources}}
+
+OUTPUT — return ONLY a JSON object of EXACTLY this shape, no prose, no markdown fences:
+
+{
+  "sub_strands": [
+    { "id": "notation", "name": "Algebraic notation & conventions", "depth_bands": ["recall","procedure","application","reasoning"], "provenance": ["NC-KS3","NCETM"], "year_flag": "agreed" },
+    { "id": "forming", "name": "Forming expressions from context", "depth_bands": ["recall","procedure","application","reasoning"], "provenance": ["NC-KS3","NCETM"], "year_flag": "agreed" },
+    { "id": "substitution", "name": "Substitution", "depth_bands": ["recall","procedure","application","reasoning"], "provenance": ["NC-KS3","AQA"], "year_flag": "agreed" },
+    { "id": "simplifying", "name": "Simplifying (collecting like terms)", "depth_bands": ["recall","procedure","application","reasoning"], "provenance": ["NC-KS3","NCETM"], "year_flag": "agreed" },
+    { "id": "expanding_single", "name": "Expanding a single bracket", "depth_bands": ["recall","procedure","application"], "provenance": ["NC-KS3","AQA"], "year_flag": "agreed" },
+    { "id": "solving_linear", "name": "Solving linear equations", "depth_bands": ["recall","procedure","application","reasoning"], "provenance": ["NC-KS3","Edexcel"], "year_flag": "agreed" },
+    { "id": "expanding_double", "name": "Expanding double brackets", "depth_bands": ["procedure","application"], "provenance": ["AQA","Edexcel"], "year_flag": "disputed" }
+  ],
+  "prerequisites": [
+    { "sub_strand": "solving_linear", "requires": ["substitution","simplifying"] },
+    { "sub_strand": "expanding_single", "requires": ["notation"] }
+  ],
+  "misconceptions": [
+    { "sub_strand": "simplifying", "wrong": "5x + 3 = 8x", "why": "treats unlike terms as like", "correct": "5x + 3 (cannot be combined)" },
+    { "sub_strand": "substitution", "wrong": "2x^2 = 64 when x = 4", "why": "squares 2x as a whole instead of squaring only x", "correct": "2 * 4^2 = 32" }
+  ]
+}
+
+That example is for Year 7 "Expressions & Equations" — produce the equivalent UNION for the TARGET above. Include every plausible sub-strand with honest provenance and year_flag. Return JSON only.
