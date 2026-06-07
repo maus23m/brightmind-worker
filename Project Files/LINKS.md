@@ -21,10 +21,10 @@ Admin login: `maus23@gmail.com` (temp password set out-of-band; password reset i
 | Supabase project | `rtyvomkhajyinlycgjzm` (brightmind-v2) |
 | Edge functions | `generate-questions`, `job-status`, `run-sweep` (admin-gated curriculum sweep) |
 
-**Operator note:** the admin "Run sweep" button needs `ANTHROPIC_API_KEY` set as a Supabase
-function secret (`supabase secrets set ANTHROPIC_API_KEY=…`, or Dashboard → Edge Functions →
-Secrets). Until then the button returns "key not configured". The CLI sweep
-(`node scripts/curriculum_sweep.js …`) uses your shell env instead and is unaffected.
+**Run sweep:** the admin "Run sweep" button (Curriculum tab) calls the `run-sweep` Edge
+Function, which reads the project-wide `ANTHROPIC_API_KEY` Supabase secret (already
+configured — no setup needed). Confirmed working. The CLI sweep
+(`node scripts/curriculum_sweep.js …`) uses your shell env instead.
 
 ## Pull requests
 | PR | Title | State |

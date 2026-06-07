@@ -61,9 +61,10 @@ branch.
 - **In-app Run sweep:** admin-gated Supabase Edge Function `run-sweep`
   (`supabase/functions/run-sweep/index.ts`, deployed via MCP) + a "Run sweep" panel in
   the admin Curriculum tab (subject+year+topic / all-for-year). Moved
-  `curriculum_taxonomy.json` → `frontend/` (served + fetched by the app). **Operator step:
-  set `ANTHROPIC_API_KEY` as a Supabase function secret** or the button returns "key not
-  configured". Edge function re-ports the prompt + validator (DEF-048).
+  `curriculum_taxonomy.json` → `frontend/` (served + fetched by the app).
+  `ANTHROPIC_API_KEY` already exists as a project-wide Supabase secret (shared with all
+  functions), so no setup was needed. **Confirmed working in-browser.** Edge function
+  re-ports the prompt + validator (DEF-048).
 
 ## Test status
 `npm test` green: compute 70 + review 30 + prompts 33 + config 16 + curriculum 20 + sweep 20.
