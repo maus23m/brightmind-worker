@@ -53,9 +53,14 @@ branch.
   Approve (RPC) / Reject; read-only approved-objects list.
 - Tester `curriculum.test.js` (20) + `prompts.test.js` (+6). Left a pristine first-run
   state: 1 pending proposal, 0 approved objects.
+- **Batch sweep:** `scripts/curriculum_sweep.js` gained a per-subject+year batch mode
+  (`--subject maths --year 7 [--yes] [--topics] [--limit]`) reading a canonical
+  `curriculum_taxonomy.json` (mirrors the frontend constants); skips already
+  pending/approved topics; plan/confirm guard (no calls without `--yes`). New
+  `sweep.test.js` (20). Taxonomy now duplicated frontend↔JSON → DEF-048 (sync debt).
 
 ## Test status
-`npm test` green: compute 70 + review 30 + prompts 33 + config 16 + curriculum 20.
+`npm test` green: compute 70 + review 30 + prompts 33 + config 16 + curriculum 20 + sweep 20.
 `node --check` clean on all JS + both HTML script blocks.
 
 ## Deploy / operate notes

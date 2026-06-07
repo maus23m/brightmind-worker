@@ -1,0 +1,36 @@
+{
+  "_note": "Canonical machine-readable curriculum taxonomy for the offline sweep. MIRRORS the hardcoded CURRICULUM_KS*_* constants in frontend/index.html (~lines 1604-1632) — topic chips MUST match those strings character-for-character (they are the integration key for curriculum_objects). Keep the two in sync (see DEF in the defect log). year<=6 uses KS1_2; year>=7 uses KS3_4 (mirrors getCurriculum).",
+  "maths": {
+    "KS1_2": {
+      "Number & Place Value": ["Counting & Ordering", "Place Value", "Comparing Numbers", "Rounding"],
+      "Addition & Subtraction": ["Mental Addition", "Mental Subtraction", "Column Addition", "Column Subtraction", "Word Problems"],
+      "Multiplication & Division": ["Times Tables", "Short Multiplication", "Short Division", "Long Multiplication", "Word Problems"],
+      "Fractions & Decimals": ["Fractions of Shapes", "Equivalent Fractions", "Adding Fractions", "Decimals", "Fractions & Decimals Link"],
+      "Measurement": ["Length & Height", "Mass & Weight", "Capacity & Volume", "Time", "Money", "Perimeter & Area"],
+      "Geometry": ["2D Shapes", "3D Shapes", "Lines of Symmetry", "Position & Direction", "Angles Introduction"],
+      "Statistics": ["Tally Charts", "Bar Charts", "Pictograms", "Tables", "Line Graphs"]
+    },
+    "KS3_4": {
+      "Number & Arithmetic": ["Integers & Decimals", "Fractions", "Percentages", "Powers & Roots", "Standard Form"],
+      "Algebra": ["Expressions & Equations", "Sequences", "Graphs & Functions", "Inequalities", "Simultaneous Equations"],
+      "Ratio & Proportion": ["Ratio", "Proportion", "Rates of Change", "Direct & Inverse Proportion"],
+      "Geometry & Measures": ["Angles & Lines", "Shapes & Area", "Circles", "Transformations", "Pythagoras & Trigonometry", "3D Shapes"],
+      "Statistics & Probability": ["Data Collection", "Charts & Graphs", "Averages", "Probability"]
+    }
+  },
+  "science": {
+    "KS1_2": {
+      "Living Things": ["Plants", "Animals Including Humans", "Habitats", "Life Cycles", "Classification"],
+      "Materials": ["Everyday Materials", "Properties of Materials", "Rocks & Soils", "States of Matter", "Reversible & Irreversible Changes"],
+      "Forces & Energy": ["Pushes & Pulls", "Magnets", "Light & Shadows", "Sound", "Electricity Basics"],
+      "Earth & Space": ["Seasons", "Day & Night", "The Solar System", "The Moon"],
+      "Scientific Skills": ["Observing & Measuring", "Fair Tests", "Recording Results", "Drawing Conclusions"]
+    },
+    "KS3_4": {
+      "Biology": ["Cells & Organisation", "Nutrition & Digestion", "Reproduction", "Genetics", "Ecosystems & Environment"],
+      "Chemistry": ["Atoms & Elements", "Compounds & Mixtures", "Chemical Reactions", "The Periodic Table", "Acids & Bases"],
+      "Physics": ["Forces & Motion", "Energy", "Waves & Sound", "Light & Electromagnetism", "Electricity", "Space Physics"],
+      "Scientific Method": ["Data & Graphs", "Variables & Experiments", "Units & Measurement"]
+    }
+  }
+}
