@@ -58,6 +58,12 @@ branch.
   `curriculum_taxonomy.json` (mirrors the frontend constants); skips already
   pending/approved topics; plan/confirm guard (no calls without `--yes`). New
   `sweep.test.js` (20). Taxonomy now duplicated frontend↔JSON → DEF-048 (sync debt).
+- **In-app Run sweep:** admin-gated Supabase Edge Function `run-sweep`
+  (`supabase/functions/run-sweep/index.ts`, deployed via MCP) + a "Run sweep" panel in
+  the admin Curriculum tab (subject+year+topic / all-for-year). Moved
+  `curriculum_taxonomy.json` → `frontend/` (served + fetched by the app). **Operator step:
+  set `ANTHROPIC_API_KEY` as a Supabase function secret** or the button returns "key not
+  configured". Edge function re-ports the prompt + validator (DEF-048).
 
 ## Test status
 `npm test` green: compute 70 + review 30 + prompts 33 + config 16 + curriculum 20 + sweep 20.

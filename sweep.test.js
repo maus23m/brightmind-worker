@@ -12,7 +12,7 @@ function check(name, cond) {
   else { fail++; console.log(`FAIL  ${name}`); }
 }
 
-const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "curriculum_taxonomy.json"), "utf-8"));
+const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "curriculum_taxonomy.json"), "utf-8"));
 
 // ── taxonomy file shape ──
 {

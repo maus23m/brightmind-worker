@@ -57,6 +57,10 @@
   .prop .actions { margin-top:14px; display:flex; gap:10px; }
   .prop .actions button.reject { background:transparent; border:1px solid var(--danger); color:var(--danger); }
   .addss { display:flex; gap:8px; margin-top:10px; }
+  select { padding:9px 11px; background:#0d1117; border:1px solid var(--line); border-radius:7px; color:var(--txt); font:inherit; }
+  .sweep-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #sw-progress { margin-top:12px; }
+  #sw-progress .line { font-size:12px; color:var(--muted); padding:2px 0; }
 </style>
 </head>
 <body>
@@ -98,6 +102,18 @@
     </div>
 
     <div id="pane-curriculum" class="hidden">
+      <div class="card">
+        <h2>Run sweep</h2>
+        <p class="muted" style="margin-top:-8px">Generate maximum-recall proposals for review. Each topic is one Claude call (server-side); topics already pending or approved are skipped automatically.</p>
+        <div class="sweep-form">
+          <select id="sw-subject"><option value="maths">Maths</option><option value="science">Science</option></select>
+          <select id="sw-year"></select>
+          <select id="sw-topic"></select>
+          <button id="sw-run">Run sweep</button>
+        </div>
+        <div id="sw-progress"></div>
+      </div>
+
       <div class="card">
         <h2>Proposals awaiting review</h2>
         <p class="muted" style="margin-top:-8px">Maximum-recall sweep output. Untick a sub-strand to prune it, edit a name inline, or add one. Approve freezes a versioned, stamped object the worker reads; nothing reaches a child until approved.</p>
@@ -316,6 +332,7 @@ function switchPane(name) {
   $('pane-curriculum').classList.toggle('hidden', name !== 'curriculum');
   if (name === 'curriculum' && !curriculumLoaded) {
     curriculumLoaded = true;
+    initSweepForm();
     Promise.all([loadProposals(), loadApprovedObjects()]);
   }
 }
@@ -463,6 +480,71 @@ async function loadApprovedObjects() {
   } catch (e) {
     box.innerHTML = `<div class="msg err">Could not load approved objects: ${esc(e.message)}</div>`;
   }
+}
+
+// ── Curriculum: Run sweep (calls the admin-gated run-sweep Edge Function) ──
+let TAXONOMY = null;
+let sweepInited = false;
+async function loadTaxonomy() {
+  if (TAXONOMY) return TAXONOMY;
+  const res = await fetch('curriculum_taxonomy.json');
+  if (!res.ok) throw new Error('could not load curriculum_taxonomy.json');
+  TAXONOMY = await res.json();
+  return TAXONOMY;
+}
+// Mirror of scripts topicsFor / frontend getCurriculum: year<=6 → KS1_2 else KS3_4.
+function swTopicsFor(tax, subject, year) {
+  const subj = tax[subject]; if (!subj) return [];
+  const cats = subj[Number(year) <= 6 ? 'KS1_2' : 'KS3_4']; if (!cats) return [];
+  const seen = new Set(), out = [];
+  Object.values(cats).forEach((list) => list.forEach((t) => { if (!seen.has(t)) { seen.add(t); out.push(t); } }));
+  return out;
+}
+async function refreshSweepTopics() {
+  let topics = [];
+  try { topics = swTopicsFor(await loadTaxonomy(), $('sw-subject').value, $('sw-year').value); }
+  catch (e) { showMsg($('global-msg'), 'err', e.message); }
+  $('sw-topic').innerHTML = `<option value="__all__">All topics for this year (${topics.length})</option>` +
+    topics.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+}
+function initSweepForm() {
+  if (sweepInited) return;
+  sweepInited = true;
+  $('sw-year').innerHTML = [2,3,4,5,6,7,8,9,10,11].map((y) => `<option value="${y}"${y===7?' selected':''}>Year ${y}</option>`).join('');
+  $('sw-subject').addEventListener('change', refreshSweepTopics);
+  $('sw-year').addEventListener('change', refreshSweepTopics);
+  $('sw-run').addEventListener('click', runSweep);
+  refreshSweepTopics();
+}
+async function runSweep() {
+  const subject = $('sw-subject').value, year = Number($('sw-year').value), pick = $('sw-topic').value;
+  let topics;
+  try { topics = pick === '__all__' ? swTopicsFor(await loadTaxonomy(), subject, year) : [pick]; }
+  catch (e) { showMsg($('global-msg'), 'err', e.message); return; }
+  if (!topics.length) { showMsg($('global-msg'), 'err', 'No topics for that subject/year.'); return; }
+
+  const btn = $('sw-run'); btn.disabled = true;
+  const prog = $('sw-progress'); prog.innerHTML = '';
+  const log = (html) => { prog.innerHTML = html + prog.innerHTML; };
+  let created = 0, skipped = 0, failed = 0;
+  for (let i = 0; i < topics.length; i++) {
+    const topic = topics[i];
+    log(`<div class="line">(${i + 1}/${topics.length}) ${esc(topic)}…</div>`);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/run-sweep`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${session.token}` },
+        body: JSON.stringify({ subject, topic, year }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { failed++; log(`<div class="msg err">${esc(topic)}: ${esc(data.error || ('HTTP ' + res.status))}</div>`); }
+      else if (data.skipped) { skipped++; log(`<div class="line">${esc(topic)}: already exists, skipped</div>`); }
+      else { created++; log(`<div class="line">${esc(topic)}: ✓ ${esc(data.sub_strands)} sub-strands</div>`); }
+    } catch (e) { failed++; log(`<div class="msg err">${esc(topic)}: ${esc(e.message)}</div>`); }
+  }
+  log(`<div class="msg ok">Done: ${created} created, ${skipped} skipped, ${failed} failed.</div>`);
+  btn.disabled = false;
+  await loadProposals();
 }
 
 // ── Sign-in flow ──
