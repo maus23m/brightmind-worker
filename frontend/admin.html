@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>BrightMind — Admin</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2230; --line:#2a3340; --txt:#e6edf3; --muted:#8b98a9; --accent:#4f9cff; --danger:#ff6b6b; --ok:#4caf78; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .who { color:var(--muted); font-size:13px; }
+  main { max-width:980px; margin:0 auto; padding:24px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:20px; }
+  h2 { font-size:14px; margin:0 0 14px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  input[type=text], input[type=email], input[type=password] {
+    width:100%; padding:9px 11px; background:#0d1117; border:1px solid var(--line);
+    border-radius:7px; color:var(--txt); font:inherit;
+  }
+  button { padding:9px 16px; border:none; border-radius:7px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+  button.secondary { background:#2a3340; }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:grid; grid-template-columns: 1fr 1.4fr auto; gap:12px; align-items:end; padding:14px 0; border-top:1px solid var(--line); }
+  .row:first-of-type { border-top:none; }
+  .row .key { font-weight:600; }
+  .row .desc { color:var(--muted); font-size:12px; margin-top:3px; }
+  .row .type { display:inline-block; font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:5px; padding:1px 6px; margin-left:8px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  td.val { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .msg { padding:10px 12px; border-radius:7px; margin-bottom:14px; font-size:13px; }
+  .msg.err { background:rgba(255,107,107,.12); color:var(--danger); border:1px solid rgba(255,107,107,.3); }
+  .msg.ok  { background:rgba(76,175,120,.12); color:var(--ok);    border:1px solid rgba(76,175,120,.3); }
+  .hidden { display:none; }
+  .signin { max-width:360px; margin:80px auto; }
+  .signin .card > * + * { margin-top:12px; }
+  .muted { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+
+<div id="signin-view" class="signin">
+  <div class="card">
+    <h2>Admin sign-in</h2>
+    <div id="signin-msg"></div>
+    <div><label>Email</label><input id="email" type="email" autocomplete="username"></div>
+    <div><label>Password</label><input id="password" type="password" autocomplete="current-password"></div>
+    <div><button id="signin-btn">Sign in</button></div>
+    <p class="muted">Internal operator surface. Admin access only.</p>
+  </div>
+</div>
+
+<div id="admin-view" class="hidden">
+  <header>
+    <h1>BrightMind — Admin</h1>
+    <div><span class="who" id="who"></span> &nbsp; <button class="secondary" id="signout-btn">Sign out</button></div>
+  </header>
+  <main>
+    <div id="global-msg"></div>
+
+    <div class="card">
+      <h2>Runtime config</h2>
+      <p class="muted" style="margin-top:-8px">Live dials the worker reads each job. Empty/absent keys fall back to the deploy defaults. Every save is recorded below.</p>
+      <div id="config-list">Loading…</div>
+    </div>
+
+    <div class="card">
+      <h2>Recent changes</h2>
+      <div id="audit-list">Loading…</div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════
+// BrightMind Admin — internal operator SPA.
+// Vanilla JS, no build step, mirrors the lightweight Supabase client used by the
+// parent app (frontend/index.html). All power is behind Supabase Auth + RLS: the
+// publishable key is anon, and runtime_config / config_audit / admin_users are
+// admin-gated by row-level security, so serving this file publicly is safe.
+// ════════════════════════════════════════════════════
+const SUPABASE_URL = 'https://rtyvomkhajyinlycgjzm.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_UESTkBpETmgY92Cu_Onfag_WDecQG6f';
+
+const supabase = (() => {
+  const headers = { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` };
+  const authHeaders = (token) => token ? { ...headers, 'Authorization': `Bearer ${token}` } : headers;
+
+  const auth = {
+    async signIn(email, password) {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+        method: 'POST', headers, body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (data.error || data.error_code) throw new Error(data.error_description || data.msg || 'Sign in failed');
+      return data; // { access_token, refresh_token, user }
+    },
+    async signOut(token) {
+      try { await fetch(`${SUPABASE_URL}/auth/v1/logout`, { method: 'POST', headers: authHeaders(token) }); } catch (e) {}
+    },
+    async getUser(token) {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: authHeaders(token) });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    async refreshToken(refreshToken) {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST', headers, body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error_description || 'Refresh failed');
+      return data;
+    },
+  };
+
+  const from = (table) => ({
+    async select(cols = '*', filters = '', token = null) {
+      let url = `${SUPABASE_URL}/rest/v1/${table}?select=${cols}`;
+      if (filters) url += '&' + filters;
+      const res = await fetch(url, { headers: authHeaders(token) });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || `HTTP ${res.status}`); }
+      return res.json();
+    },
+    async update(data, filters = '', token = null) {
+      let url = `${SUPABASE_URL}/rest/v1/${table}`;
+      if (filters) url += '?' + filters;
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { ...authHeaders(token), 'Prefer': 'return=representation' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || 'Update failed'); }
+      return res.json();
+    },
+  });
+
+  return { auth, from };
+})();
+
+// ── Session ──
+const session = {
+  get token() { return localStorage.getItem('bm_admin_token'); },
+  get refresh() { return localStorage.getItem('bm_admin_refresh'); },
+  get email() { return localStorage.getItem('bm_admin_email'); },
+  set(token, refresh, email) {
+    localStorage.setItem('bm_admin_token', token);
+    localStorage.setItem('bm_admin_refresh', refresh);
+    localStorage.setItem('bm_admin_email', email);
+  },
+  clear() { ['bm_admin_token', 'bm_admin_refresh', 'bm_admin_email'].forEach((k) => localStorage.removeItem(k)); },
+};
+
+// ── Helpers ──
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function showMsg(el, kind, text) { el.innerHTML = text ? `<div class="msg ${kind}">${esc(text)}</div>` : ''; }
+
+// Render a config value for an <input>, and encode it back per value_type for saving.
+function valueToInput(value, type) {
+  if (type === 'json') return JSON.stringify(value);
+  return value == null ? '' : String(value);
+}
+function inputToValue(raw, type) {
+  if (type === 'number') { const n = Number(raw); if (!Number.isFinite(n)) throw new Error('Not a valid number'); return n; }
+  if (type === 'bool') {
+    const v = raw.trim().toLowerCase();
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+    throw new Error('Bool must be "true" or "false"');
+  }
+  if (type === 'json') { try { return JSON.parse(raw); } catch (e) { throw new Error('Invalid JSON'); } }
+  return raw; // string
+}
+
+// ── Admin gate: only an admin_users member may proceed (RLS returns the row only for admins) ──
+async function confirmAdmin(token, userId) {
+  const rows = await supabase.from('admin_users').select('user_id', `user_id=eq.${userId}`, token);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+// ── Views ──
+function showSignin(msg) {
+  $('admin-view').classList.add('hidden');
+  $('signin-view').classList.remove('hidden');
+  if (msg) showMsg($('signin-msg'), 'err', msg);
+}
+async function showAdmin() {
+  $('signin-view').classList.add('hidden');
+  $('admin-view').classList.remove('hidden');
+  $('who').textContent = session.email || '';
+  await Promise.all([loadConfig(), loadAudit()]);
+}
+
+// ── Config list ──
+async function loadConfig() {
+  const box = $('config-list');
+  try {
+    const rows = await supabase.from('runtime_config').select(
+      'key,value,value_type,description,updated_by,updated_at', 'order=key.asc', session.token);
+    if (!rows.length) { box.innerHTML = '<p class="muted">No config keys yet.</p>'; return; }
+    box.innerHTML = rows.map((r) => `
+      <div class="row" data-key="${esc(r.key)}" data-type="${esc(r.value_type)}">
+        <div>
+          <span class="key">${esc(r.key)}</span><span class="type">${esc(r.value_type)}</span>
+          <div class="desc">${esc(r.description || '')}</div>
+          <div class="muted">last: ${esc(r.updated_by || '—')} · ${esc((r.updated_at || '').slice(0, 19).replace('T', ' '))}</div>
+        </div>
+        <div><input type="text" class="cfg-input" value="${esc(valueToInput(r.value, r.value_type))}"></div>
+        <div><button class="cfg-save">Save</button></div>
+      </div>`).join('');
+    box.querySelectorAll('.cfg-save').forEach((btn) => btn.addEventListener('click', saveConfig));
+  } catch (e) {
+    box.innerHTML = `<div class="msg err">Could not load config: ${esc(e.message)}</div>`;
+  }
+}
+
+async function saveConfig(ev) {
+  const row = ev.target.closest('.row');
+  const key = row.dataset.key, type = row.dataset.type;
+  const btn = ev.target, input = row.querySelector('.cfg-input');
+  showMsg($('global-msg'), 'ok', '');
+  let value;
+  try { value = inputToValue(input.value, type); }
+  catch (e) { showMsg($('global-msg'), 'err', `${key}: ${e.message}`); return; }
+  btn.disabled = true;
+  try {
+    await supabase.from('runtime_config').update(
+      { value, updated_by: session.email, updated_at: new Date().toISOString() },
+      `key=eq.${encodeURIComponent(key)}`, session.token);
+    showMsg($('global-msg'), 'ok', `Saved ${key}.`);
+    await Promise.all([loadConfig(), loadAudit()]);
+  } catch (e) {
+    showMsg($('global-msg'), 'err', `Save failed for ${key}: ${e.message}`);
+    btn.disabled = false;
+  }
+}
+
+// ── Audit list ──
+async function loadAudit() {
+  const box = $('audit-list');
+  try {
+    const rows = await supabase.from('config_audit').select(
+      'key,old_value,new_value,changed_by,changed_at', 'order=changed_at.desc&limit=50', session.token);
+    if (!rows.length) { box.innerHTML = '<p class="muted">No changes recorded yet.</p>'; return; }
+    box.innerHTML = `<table><thead><tr><th>When</th><th>Key</th><th>Old → New</th><th>By</th></tr></thead><tbody>${
+      rows.map((r) => `<tr>
+        <td>${esc((r.changed_at || '').slice(0, 19).replace('T', ' '))}</td>
+        <td>${esc(r.key)}</td>
+        <td class="val">${esc(JSON.stringify(r.old_value))} → ${esc(JSON.stringify(r.new_value))}</td>
+        <td>${esc(r.changed_by || '—')}</td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch (e) {
+    box.innerHTML = `<div class="msg err">Could not load audit: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Sign-in flow ──
+async function doSignIn() {
+  const email = $('email').value.trim(), password = $('password').value;
+  const btn = $('signin-btn');
+  showMsg($('signin-msg'), 'err', '');
+  if (!email || !password) { showMsg($('signin-msg'), 'err', 'Enter email and password.'); return; }
+  btn.disabled = true;
+  try {
+    const data = await supabase.auth.signIn(email, password);
+    const isAdmin = await confirmAdmin(data.access_token, data.user.id);
+    if (!isAdmin) { await supabase.auth.signOut(data.access_token); throw new Error('This account is not an admin.'); }
+    session.set(data.access_token, data.refresh_token, email);
+    await showAdmin();
+  } catch (e) {
+    showMsg($('signin-msg'), 'err', e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function doSignOut() {
+  await supabase.auth.signOut(session.token);
+  session.clear();
+  showSignin();
+}
+
+// ── Boot: resume a stored admin session if the token still validates ──
+async function boot() {
+  $('signin-btn').addEventListener('click', doSignIn);
+  $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSignIn(); });
+  $('signout-btn').addEventListener('click', doSignOut);
+
+  if (!session.token) { showSignin(); return; }
+  let user = await supabase.auth.getUser(session.token);
+  if (!user && session.refresh) {
+    try {
+      const r = await supabase.auth.refreshToken(session.refresh);
+      session.set(r.access_token, r.refresh_token, session.email);
+      user = r.user;
+    } catch (e) { /* fall through to sign-in */ }
+  }
+  if (!user) { session.clear(); showSignin(); return; }
+  if (!(await confirmAdmin(session.token, user.id))) { session.clear(); showSignin('Admin access revoked.'); return; }
+  await showAdmin();
+}
+
+boot();
+</script>
+</body>
+</html>

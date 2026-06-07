@@ -25,6 +25,19 @@ const DIAGRAM_MODEL = process.env.DIAGRAM_MODEL || "claude-opus-4-7";
 const MAX_TOKENS = Number(process.env.MAX_TOKENS) || 8000;
 const DIAGRAM_MAX_TOKENS = Number(process.env.DIAGRAM_MAX_TOKENS) || 16000;
 
+// Admin backend (first slice): the four dials above can be overridden live from the
+// Supabase `runtime_config` table (see getConfig) without a redeploy. CONFIG_DEFAULTS
+// is the env/hardcoded fallback used when a key is absent or the table is unreachable,
+// so an empty/missing config reproduces today's behaviour exactly. It is also the
+// default `cfg` for the pipeline functions, keeping their behaviour unchanged when
+// called without a resolved config (e.g. from tests).
+const CONFIG_DEFAULTS = {
+  model: MODEL,
+  diagramModel: DIAGRAM_MODEL,
+  maxTokens: MAX_TOKENS,
+  diagMaxTokens: DIAGRAM_MAX_TOKENS,
+};
+
 // ── Prompt Loader ──
 
 const promptCache = {};
@@ -101,6 +114,47 @@ async function supaFetch(url, key, path, opts = {}) {
   }
   if (opts.headers?.Prefer?.includes("return=minimal")) return null;
   return res.json();
+}
+
+// ── Runtime Config (admin backend — first slice) ──
+// Adjustable dials live in the Supabase `runtime_config` table so they can be retuned
+// without a redeploy. Reads are cached per worker instance with a short TTL; on any
+// miss or error we fall back to the env/hardcoded default, so an empty or unreachable
+// table reproduces today's behaviour exactly. The worker uses the service-role key,
+// which bypasses RLS. `fetcher` is injectable so the cache/fallback logic is unit-
+// testable without a network (see config.test.js).
+const CONFIG_TTL_MS = Number(process.env.CONFIG_TTL_MS) || 60000;
+const configCache = {};
+
+// Pure: coerce a `runtime_config` row to a typed value, or return the fallback when
+// the row or its value is absent. Exported for tests.
+function _parseConfigValue(row, fallback) {
+  if (!row || row.value === undefined || row.value === null) return fallback;
+  const { value, value_type } = row;
+  switch (value_type) {
+    case "number": { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+    case "bool": return value === true || value === "true";
+    case "string": return String(value);
+    default: return value; // json / unspecified — pass through as stored
+  }
+}
+
+async function getConfig(url, key, configKey, fallback, fetcher = supaFetch) {
+  const now = Date.now();
+  const hit = configCache[configKey];
+  if (hit && hit.expires > now) return hit.value;
+  try {
+    const rows = await fetcher(url, key,
+      `runtime_config?key=eq.${encodeURIComponent(configKey)}&select=value,value_type`);
+    const row = rows && rows[0];
+    const fromConfig = !!(row && row.value !== undefined && row.value !== null);
+    const value = _parseConfigValue(row, fallback);
+    configCache[configKey] = { value, expires: now + CONFIG_TTL_MS, fromConfig };
+    return value;
+  } catch (e) {
+    console.error(`[Config] read failed for ${configKey}, using fallback: ${e.message}`);
+    return fallback;
+  }
 }
 
 // ── Stage 0: Bank Read ──
@@ -222,9 +276,9 @@ function buildPrompt(subj, yr, topics, diff, n, excl, rejections = []) {
   });
 }
 
-async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = []) {
+async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = [], cfg = CONFIG_DEFAULTS) {
   const prompt = buildPrompt(subj, yr, topics, diff, n, excl, rejections);
-  const raw = await callClaude(apiKey, prompt);
+  const raw = await callClaude(apiKey, prompt, cfg.maxTokens, null, cfg.model);
   const qs = JSON.parse(raw.replace(/```json|```/g, "").trim());
   if (!Array.isArray(qs) || !qs.length) throw new Error("Empty generation");
   return qs
@@ -262,7 +316,7 @@ const { computeVerify: verify } = require("./compute");
 // ── Stage 3: Claude SVG Diagram Generation ──
 // DEF-040: this stage runs on DIAGRAM_MODEL (Opus), not the default text model.
 
-async function drawDiagram(apiKey, question, yr, subj) {
+async function drawDiagram(apiKey, question, yr, subj, cfg = CONFIG_DEFAULTS) {
   const diagramDesc = question.diagramPrompt || `Draw a diagram for this Year ${yr} ${subj} question: "${question.q}"`;
 
   const diagramUserTemplate = loadPrompt("diagram_user");
@@ -272,9 +326,9 @@ async function drawDiagram(apiKey, question, yr, subj) {
 
   const systemPrompt = loadPrompt("diagram_system");
 
-  console.log(`[Diagram] Model: ${DIAGRAM_MODEL} | Prompt: ${diagramDesc.slice(0, 500)}`);
+  console.log(`[Diagram] Model: ${cfg.diagramModel} | Prompt: ${diagramDesc.slice(0, 500)}`);
 
-  const raw = await callClaude(apiKey, prompt, DIAGRAM_MAX_TOKENS, systemPrompt, DIAGRAM_MODEL);
+  const raw = await callClaude(apiKey, prompt, cfg.diagMaxTokens, systemPrompt, cfg.diagramModel);
   const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/i);
   if (!svgMatch) {
     console.error(`[Diagram] No SVG found in response. Raw (first 500 chars): ${raw.slice(0, 500)}`);
@@ -283,7 +337,7 @@ async function drawDiagram(apiKey, question, yr, subj) {
   return svgMatch[0].trim();
 }
 
-async function processDiagrams(apiKey, qs, yr, subj) {
+async function processDiagrams(apiKey, qs, yr, subj, cfg = CONFIG_DEFAULTS) {
   const results = [];
 
   for (const q of qs) {
@@ -297,7 +351,7 @@ async function processDiagrams(apiKey, qs, yr, subj) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       console.log(`[Diagram] Attempt ${attempt} for: "${q.q.slice(0, 80)}"`);
       try {
-        svg = await drawDiagram(apiKey, q, yr, subj);
+        svg = await drawDiagram(apiKey, q, yr, subj, cfg);
         if (svg) {
           console.log(`[Diagram] Success (${svg.length} chars)`);
           break;
@@ -326,7 +380,7 @@ async function processDiagrams(apiKey, qs, yr, subj) {
 // per question; the pure merge logic lives in review.js so it stays unit-testable.
 const { buildReviewQuestions, applyReview } = require("./review");
 
-async function review(apiKey, qs, yr, subj) {
+async function review(apiKey, qs, yr, subj, cfg = CONFIG_DEFAULTS) {
   if (!qs.length) return qs;
   try {
     const template = loadPrompt("review");
@@ -339,8 +393,9 @@ async function review(apiKey, qs, yr, subj) {
     });
 
     // 4000 tokens covers the auditor's rewrite headroom (was 3000) plus the small
-    // child payload (was 1500), in a single round-trip.
-    const raw = await callClaude(apiKey, prompt, 4000);
+    // child payload (was 1500), in a single round-trip. The review model follows the
+    // text dial (cfg.model); the 4000-token cap is fixed (independent of MAX_TOKENS).
+    const raw = await callClaude(apiKey, prompt, 4000, null, cfg.model);
     const results = JSON.parse(raw.replace(/```json|```/g, "").trim());
 
     return applyReview(qs, results);
@@ -421,7 +476,19 @@ functions.http("worker", async (req, res) => {
     await updateJob(url, key, jobId, { status: "processing", started_at: new Date().toISOString() });
 
     const { subject, year_group: yr, topics, difficulty, question_count: count, child_id: childId, previous_ids: previousIds } = job;
-    console.log(`[Job ${jobId}] Starting: ${subject} Y${yr} ${topics.join(",")} ${difficulty} x${count} | text=${MODEL} diagram=${DIAGRAM_MODEL} | maxTok=${MAX_TOKENS} diagMaxTok=${DIAGRAM_MAX_TOKENS}`);
+
+    // Resolve the live dials from runtime_config (admin backend), each falling back to
+    // its env/hardcoded default. Concurrency-safe: cfg is per-job, never module state.
+    const cfg = {
+      model: await getConfig(url, key, "CLAUDE_MODEL", MODEL),
+      diagramModel: await getConfig(url, key, "DIAGRAM_MODEL", DIAGRAM_MODEL),
+      maxTokens: await getConfig(url, key, "MAX_TOKENS", MAX_TOKENS),
+      diagMaxTokens: await getConfig(url, key, "DIAGRAM_MAX_TOKENS", DIAGRAM_MAX_TOKENS),
+    };
+    // DEF-040 discipline: log every resolved variable, and whether it came from the
+    // config table or the fallback default — a live override must be visible in logs.
+    const src = (k) => (configCache[k]?.fromConfig ? "config" : "default");
+    console.log(`[Job ${jobId}] Starting: ${subject} Y${yr} ${topics.join(",")} ${difficulty} x${count} | text=${cfg.model}(${src("CLAUDE_MODEL")}) diagram=${cfg.diagramModel}(${src("DIAGRAM_MODEL")}) | maxTok=${cfg.maxTokens}(${src("MAX_TOKENS")}) diagMaxTok=${cfg.diagMaxTokens}(${src("DIAGRAM_MAX_TOKENS")})`);
 
     // Stage 0: Bank
     let seen = new Set(), recent = [];
@@ -441,7 +508,7 @@ functions.http("worker", async (req, res) => {
     const excl = [...recent, ...bq.map((q) => q.q?.trim().slice(0, 80)).filter(Boolean)];
     const rejections = await getRecentRejections(url, key, subject, yr);
     if (rejections.length) console.log(`[Job ${jobId}] Loaded ${rejections.length} parent rejections for feedback`);
-    let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl, rejections);
+    let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl, rejections, cfg);
     if (seen.size) generated = generated.filter((q) => !seen.has(qh(q.q)));
     console.log(`[Job ${jobId}] Stage 1: Generated ${generated.length} (${generated.filter(q => q.needsDiagram).length} need diagrams)`);
 
@@ -463,11 +530,11 @@ functions.http("worker", async (req, res) => {
       .map((q) => ({ reason: "automatic verification", note: q._computeReason || "compute check failed", question_text: q.q || "" }));
 
     // Stage 3: Claude SVG Diagrams
-    const withDiagrams = await processDiagrams(apiKey, verified, yr, subject);
+    const withDiagrams = await processDiagrams(apiKey, verified, yr, subject, cfg);
     console.log(`[Job ${jobId}] Stage 3: ${withDiagrams.filter(q => q.svg).length} diagrams drawn, ${verified.length - withDiagrams.length} dropped (Claude SVG)`);
 
     // Stage 4: Review (Audit + Child Agent merged in one model call — CR-016)
-    const reviewed = await review(apiKey, withDiagrams, yr, subject);
+    const reviewed = await review(apiKey, withDiagrams, yr, subject, cfg);
     const passed = reviewed.filter((q) => !q._auditFailed && !q._childFailed);
     // CR-019 feedback fidelity: keep both rejection categories distinct.
     reviewed.filter((q) => q._auditFailed).forEach((q) =>
@@ -491,10 +558,10 @@ functions.http("worker", async (req, res) => {
         const topupRejections = [...rejections, ...pipelineRejections];
         if (pipelineRejections.length)
           console.log(`[Job ${jobId}] Top-up: feeding back ${pipelineRejections.length} pipeline rejection reason(s)`);
-        const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl, topupRejections);
+        const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl, topupRejections, cfg);
         // DEF-041: top-up questions go through the compute engine too — reject failures.
         const topupVerified = verify(topup, subject).filter((q) => !q._computeFailed);
-        const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject);
+        const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject, cfg);
         const es = new Set(final.map((q) => q.q?.trim().toLowerCase().slice(0, 80)));
         const fresh = dedup(topupWithDiagrams).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
         final = [...final, ...fresh.slice(0, count - final.length)];
@@ -543,3 +610,7 @@ functions.http("worker", async (req, res) => {
     res.status(500).json({ status: "failed", error: e.message });
   }
 });
+
+// Exposed for the Tester (config.test.js). Requiring this module still registers the
+// functions.http worker above, so the Cloud Run entry point is unaffected.
+module.exports = { getConfig, _parseConfigValue, CONFIG_DEFAULTS };
