@@ -15,7 +15,10 @@
 const fs = require("fs");
 const path = require("path");
 // Curriculum curation (Slice 2): pure steering logic shared with the offline sweep.
-const { buildCurriculumGuidance } = require("./curriculum");
+// CR-022 (cont.): + sub-strand alignment and the depth-band normaliser for 2D tagging.
+const { buildCurriculumGuidance, approvedSubStrandIndex, normaliseDepth } = require("./curriculum");
+// CR-022 (cont.): per-child coverage matrix + width-adaptive driver (pure, see coverage.js).
+const { buildCoverageMatrix, buildCoverageTargetGuidance, untestedCells } = require("./coverage");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
@@ -180,6 +183,22 @@ async function getApprovedCurriculum(url, key, subject, yr, topics) {
   }
 }
 
+// ── CR-022 (cont.): child coverage read ──
+// Recent completed results (with their per-question answer records) for the coverage
+// matrix. The matrix is a projection over these rows — no separate matrix table. Errors
+// or no data → [] → no steering (fallback preserved). Service-role read.
+async function getChildResults(url, key, childId, limit = 20) {
+  if (!childId) return [];
+  try {
+    const rows = await supaFetch(url, key,
+      `results?child_id=eq.${childId}&order=completed_at.desc&limit=${limit}&select=answers`);
+    return Array.isArray(rows) ? rows : [];
+  } catch (e) {
+    console.error(`[Coverage] child results read failed (no steering): ${e.message}`);
+    return [];
+  }
+}
+
 // ── Stage 0: Bank Read ──
 
 async function getSeen(url, key, childId, topics) {
@@ -209,7 +228,7 @@ async function getSeen(url, key, childId, topics) {
   return { h, t };
 }
 
-async function adaptBank(url, key, subj, yr, topics, diff, cnt, prev, seen) {
+async function adaptBank(url, key, subj, yr, topics, diff, cnt, prev, seen, gapSubStrands = []) {
   const ids = new Set();
   const c = [];
   async function tier(df, rem) {
@@ -228,11 +247,27 @@ async function adaptBank(url, key, subj, yr, topics, diff, cnt, prev, seen) {
     rows = rows.filter((r) => !ids.has(r.id));
     rows.sort(() => Math.random() - 0.5).slice(0, rem).forEach((r) => {
       ids.add(r.id);
-      c.push({ q: r.q, o: r.o, c: r.c, e: r.e, ...(r.svg ? { svg: r.svg } : {}), ...(r.subtopic ? { subtopic: r.subtopic } : {}), _fromBank: true, _bankId: r.id });
+      // CR-022 (cont.): carry the 2D coverage tags so bank-sourced questions stay on the
+      // matrix (and the chip strip) just like generated ones. subtopic kept as alias.
+      const sub = r.sub_strand || r.subtopic || null;
+      c.push({
+        q: r.q, o: r.o, c: r.c, e: r.e,
+        ...(r.svg ? { svg: r.svg } : {}),
+        ...(sub ? { subStrand: sub, subtopic: sub } : {}),
+        ...(r.depth ? { depth: r.depth } : {}),
+        _fromBank: true, _bankId: r.id,
+      });
     });
   }
   try {
-    await tier(`&difficulty=eq.${encodeURIComponent(diff)}`, cnt);
+    // CR-022 (cont.) Slice E: a child with coverage gaps gets gap-cell bank rows FIRST —
+    // top-up fills a width/depth gap, not just a count shortfall. PostgREST `in.()` filter
+    // on sub_strand; falls through to the difficulty/any tiers below for a sparse bank.
+    if (gapSubStrands.length) {
+      const inList = gapSubStrands.map((s) => `"${String(s).replace(/"/g, '\\"')}"`).join(",");
+      await tier(`&sub_strand=in.(${encodeURIComponent(inList)})`, cnt);
+    }
+    if (c.length < cnt) await tier(`&difficulty=eq.${encodeURIComponent(diff)}`, cnt - c.length);
     if (c.length < cnt) await tier("", cnt - c.length);
     if (ids.size) {
       await fetch(`${url}/rest/v1/question_bank?id=in.(${[...ids].join(",")})`, {
@@ -260,7 +295,7 @@ async function getRecentRejections(url, key, subj, yr) {
 
 // ── Stage 1: Generate questions (TEXT ONLY) ──
 
-function buildPrompt(subj, yr, topics, diff, n, excl, rejections = [], curriculum = "") {
+function buildPrompt(subj, yr, topics, diff, n, excl, rejections = [], curriculum = "", coverageTarget = "") {
   const exStr = excl.length ? `\nDo NOT repeat these questions:\n${excl.map((q, i) => `${i + 1}. ${q}`).join("\n")}` : "";
 
   let rejStr = "";
@@ -296,35 +331,66 @@ function buildPrompt(subj, yr, topics, diff, n, excl, rejections = [], curriculu
     age_high: String(yr + 5),
     // Slice 2: approved-curriculum steering block (empty string → self-enumeration fallback).
     curriculum: curriculum,
+    // CR-022 (cont.) Slice D: width-adaptive coverage-target block (empty string → no
+    // steering, prompt identical to today). Soft steer, composes with difficulty.
+    coverage_target: coverageTarget,
     rejections: rejStr,
     exclusions: exStr,
   });
 }
 
-async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = [], cfg = CONFIG_DEFAULTS, curriculum = []) {
+async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = [], cfg = CONFIG_DEFAULTS, curriculum = [], coverageTarget = "") {
   const guidance = buildCurriculumGuidance(curriculum);
-  const prompt = buildPrompt(subj, yr, topics, diff, n, excl, rejections, guidance);
+  const prompt = buildPrompt(subj, yr, topics, diff, n, excl, rejections, guidance, coverageTarget);
   const raw = await callClaude(apiKey, prompt, cfg.maxTokens, null, cfg.model);
   const qs = JSON.parse(raw.replace(/```json|```/g, "").trim());
   if (!Array.isArray(qs) || !qs.length) throw new Error("Empty generation");
+
+  // CR-022 (cont.) Slice A: a flat matcher over every requested topic's approved
+  // sub-strands. Aligns a generator label to the canonical human-approved name so the
+  // coverage matrix keys on the signed-off names; an off-list label is kept + warned,
+  // never dropped (steer-with-fallback). Empty when nothing approved (today's behaviour).
+  const idx = approvedSubStrandIndex(curriculum);
+  const hasApproved = idx.byTopic.size > 0;
+  const matchSubStrand = (label) => {
+    for (const t of idx.byTopic.values()) { const m = t.match(label); if (m) return m; }
+    return null;
+  };
+
   return qs
     .filter((q) => q.q && Array.isArray(q.o) && q.o.length === 4 && typeof q.c === "number")
-    .map((q) => ({
+    .map((q) => {
+      // CR-022 (cont.) Slice A: 2D tag. subStrand (width) falls back to the legacy
+      // `subtopic` if the model only emitted that; depth (orthogonal axis) is normalised
+      // to one of the 4 bands or null (kept, never dropped — null = depth unknown).
+      const rawSub = (typeof q.subStrand === "string" && q.subStrand.trim()) ? q.subStrand.trim()
+        : (typeof q.subtopic === "string" && q.subtopic.trim()) ? q.subtopic.trim() : null;
+      let subStrand = rawSub;
+      if (rawSub && hasApproved) {
+        const canonical = matchSubStrand(rawSub);
+        if (canonical) subStrand = canonical;
+        else console.warn(`[Coverage] subStrand "${rawSub}" matches no approved sub-strand — keeping label, depth axis unaffected`);
+      }
+      const depth = normaliseDepth(q.depth);
+      return {
       q: q.q,
       o: q.o,
       c: q.c,
       e: q.e || `Option ${q.c + 1}.`,
-      // Curriculum coverage: short sub-skill label the generator assigns to each
-      // question (e.g. "Expanding double brackets"). Carried through the pipeline,
-      // returned to the frontend (coverage summary), and banked. Null when absent.
-      subtopic: (typeof q.subtopic === "string" && q.subtopic.trim()) ? q.subtopic.trim() : null,
+      // CR-022 (cont.): 2D coverage tag. subStrand = width (sub-skill), depth = cognitive
+      // band. subtopic kept as a deprecated alias (= subStrand) for one release so older
+      // screens/bank rows keep working. All carried through the pipeline and banked.
+      subStrand,
+      depth,
+      subtopic: subStrand,
       needsDiagram: !!q.needsDiagram,
       diagramPrompt: q.diagramPrompt || null,
       // DEF-041: routing tag + structured working. Defaults keep legacy/non-numeric
       // questions on the "none" track (untouched by the compute engine).
       verify: (q.verify === "arithmetic" || q.verify === "equation_balance") ? q.verify : "none",
       compute: (q.compute && typeof q.compute === "object") ? q.compute : null,
-    }));
+      };
+    });
 }
 
 // ── Stage 2: Compute Engine (DEF-041) ──
@@ -441,7 +507,11 @@ async function bankWrite(url, key, qs, subj, yr, topics, diff) {
   const store = qs.filter((q) => !q._fromBank && !q._auditFailed && !q._childFailed && !q._computeFailed && q.q);
   if (!store.length) return;
   const rows = store.map((q) => ({
-    subject: subj, year_group: yr, topic: q._topic || topics[0], subtopic: q.subtopic || null, difficulty: diff,
+    subject: subj, year_group: yr, topic: q._topic || topics[0],
+    // CR-022 (cont.): persist the 2D tags. subtopic kept (= subStrand) as the deprecated
+    // alias column; sub_strand + depth are the new 2D coverage columns (migration 0003).
+    subtopic: q.subStrand || q.subtopic || null, sub_strand: q.subStrand || q.subtopic || null, depth: q.depth || null,
+    difficulty: diff,
     q: q.q, o: q.o, c: q.c, e: q.e, ...(q.svg ? { svg: q.svg } : {}),
     audit_score: q._auditRewritten ? 0.7 : 0.9, source: "claude", content_hash: qh(q.q),
   }));
@@ -523,10 +593,32 @@ functions.http("worker", async (req, res) => {
     const covered = new Set(curriculum.filter((c) => c.status === "approved").map((c) => c.topic));
     console.log(`[Job ${jobId}] Curriculum: ${covered.size}/${topics.length} topic(s) steered by approved objects${covered.size ? ` (${[...covered].join(", ")})` : ""}, ${topics.length - covered.size} self-enumerated`);
 
+    // CR-022 (cont.) Slices D+E: build the child's coverage matrix (projection over recent
+    // results) so generation can be steered toward untested/weak cells (coverageTarget,
+    // soft) and the bank read can prefer gap-cell rows (gapSubStrands). No child / no
+    // tagged history / no gaps → both empty → behaviour identical to today (fallback).
+    // Depth and difficulty are orthogonal: this steers WHICH cell, not how hard.
+    let coverageTarget = "", gapSubStrands = [];
+    if (childId) {
+      try {
+        const childResults = await getChildResults(url, key, childId);
+        const matrix = buildCoverageMatrix(childResults);
+        // Union of every requested topic's approved sub-strands = the grid denominator, so
+        // never-seen sub-strands surface as untested width gaps (not just depth gaps within
+        // seen ones). Null when nothing approved → falls back to observed sub-strands.
+        const mergedSubs = curriculum.flatMap((o) => (o.payload && o.payload.sub_strands) || []);
+        const covObj = mergedSubs.length ? { payload: { sub_strands: mergedSubs } } : null;
+        const weakPct = await getConfig(url, key, "COVERAGE_WEAK_PCT", 0.6);
+        coverageTarget = buildCoverageTargetGuidance(matrix, covObj, { weakPct });
+        gapSubStrands = [...new Set(untestedCells(matrix, covObj, { weakPct }).map((c) => c.subStrand))];
+        if (coverageTarget) console.log(`[Job ${jobId}] Coverage driver: steering toward ${gapSubStrands.length} gap sub-strand(s) [${gapSubStrands.slice(0, 6).join(", ")}]`);
+      } catch (e) { console.error(`[Job ${jobId}] Coverage matrix build failed (no steering): ${e.message}`); }
+    }
+
     // Stage 0: Bank
     let seen = new Set(), recent = [];
     if (childId) { const d = await getSeen(url, key, childId, topics); seen = d.h; recent = d.t; }
-    let bq = await adaptBank(url, key, subject, yr, topics, difficulty, count, previousIds || [], seen);
+    let bq = await adaptBank(url, key, subject, yr, topics, difficulty, count, previousIds || [], seen, gapSubStrands);
     const need = count - bq.length;
     console.log(`[Job ${jobId}] Stage 0: Bank ${bq.length}/${count}, need ${need}`);
 
@@ -541,7 +633,7 @@ functions.http("worker", async (req, res) => {
     const excl = [...recent, ...bq.map((q) => q.q?.trim().slice(0, 80)).filter(Boolean)];
     const rejections = await getRecentRejections(url, key, subject, yr);
     if (rejections.length) console.log(`[Job ${jobId}] Loaded ${rejections.length} parent rejections for feedback`);
-    let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl, rejections, cfg, curriculum);
+    let generated = await generate(apiKey, subject, yr, topics, difficulty, need, excl, rejections, cfg, curriculum, coverageTarget);
     if (seen.size) generated = generated.filter((q) => !seen.has(qh(q.q)));
     console.log(`[Job ${jobId}] Stage 1: Generated ${generated.length} (${generated.filter(q => q.needsDiagram).length} need diagrams)`);
 
@@ -591,7 +683,7 @@ functions.http("worker", async (req, res) => {
         const topupRejections = [...rejections, ...pipelineRejections];
         if (pipelineRejections.length)
           console.log(`[Job ${jobId}] Top-up: feeding back ${pipelineRejections.length} pipeline rejection reason(s)`);
-        const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl, topupRejections, cfg, curriculum);
+        const topup = await generate(apiKey, subject, yr, topics, difficulty, count - final.length, topupExcl, topupRejections, cfg, curriculum, coverageTarget);
         // DEF-041: top-up questions go through the compute engine too — reject failures.
         const topupVerified = verify(topup, subject).filter((q) => !q._computeFailed);
         const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject, cfg);
@@ -614,9 +706,13 @@ functions.http("worker", async (req, res) => {
     const cleanQuestions = final.map((q) => {
       const clean = { q: q.q, o: q.o, c: q.c, e: q.e };
       if (q.svg) clean.svg = q.svg;
-      // Curriculum coverage: surface the sub-skill label to the frontend so the
-      // review screen can show parents which subtopics the tutorial covers.
-      if (q.subtopic) clean.subtopic = q.subtopic;
+      // CR-022 (cont.): surface the 2D coverage tags so the review screen shows the
+      // width/depth spread AND so they ride into the saved answer records (results.answers)
+      // — the data the per-child coverage matrix is later derived from. subtopic kept as
+      // the deprecated alias for the existing chip strip.
+      if (q.subStrand) clean.subStrand = q.subStrand;
+      if (q.depth) clean.depth = q.depth;
+      if (q.subtopic || q.subStrand) clean.subtopic = q.subtopic || q.subStrand;
       if (q._bankId) clean._bankId = q._bankId;
       if (q._fromBank) clean._fromBank = q._fromBank;
       return clean;
@@ -627,14 +723,22 @@ functions.http("worker", async (req, res) => {
       bank_supplied: bq.length, completed_at: new Date().toISOString(),
     });
 
-    // Curriculum coverage visibility: log how the final set spread across subtopics.
+    // CR-022 (cont.): log the 2D (sub-strand × depth) spread of the final set — width AND
+    // depth visibility (DEF-040 log-every-variable discipline). "(unknown)" depth surfaces
+    // any question the generator left untagged on the depth axis.
     const coverage = cleanQuestions.reduce((m, q) => {
-      const k = q.subtopic || "(untagged)";
+      const k = q.subStrand || q.subtopic || "(untagged)";
+      m[k] = (m[k] || 0) + 1;
+      return m;
+    }, {});
+    const depthSpread = cleanQuestions.reduce((m, q) => {
+      const k = q.depth || "(unknown)";
       m[k] = (m[k] || 0) + 1;
       return m;
     }, {});
     const coverageStr = Object.entries(coverage).map(([s, n]) => `${s}×${n}`).join(", ");
-    console.log(`[Job ${jobId}] Coverage: ${Object.keys(coverage).length} subtopic(s) — ${coverageStr}`);
+    const depthStr = Object.entries(depthSpread).map(([d, n]) => `${d}×${n}`).join(", ");
+    console.log(`[Job ${jobId}] Coverage: ${Object.keys(coverage).length} sub-strand(s) — ${coverageStr} | depth: ${depthStr}`);
     console.log(`[Job ${jobId}] Complete: ${final.length} questions (${bq.length} bank, ${final.length - bq.length} claude, ${cleanQuestions.filter(q => q.svg).length} diagrams)`);
     res.status(200).json({ status: "complete", count: final.length });
   } catch (e) {

@@ -879,6 +879,14 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
         </div>
       </div>
 
+      <!-- CR-022 (cont.): depth × width coverage map (OBSERVED — not yet a mastery
+           judgement; gated on the depth-tag agreement number per DEF-049). -->
+      <div class="card" id="coverage-mastery-card" style="margin-bottom:20px;">
+        <div class="card-title">🧭 Coverage Map</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">Which sub-skills and depths this child has <strong>practised</strong>. Empty cells are untested — score alone can't reveal them.</p>
+        <div id="coverage-mastery"></div>
+      </div>
+
       <!-- Bottom row: streak calendar + badges -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
         <!-- Streak calendar -->
@@ -2182,6 +2190,11 @@ function runTester(screen) {
       ['BEHAVIOURAL', 'renderPreview refreshes coverage',     () => renderPreview.toString().includes('renderCoverageSummary')],
       ['BEHAVIOURAL', 'Coverage counts by subtopic',          () => renderCoverageSummary.toString().includes('subtopic')],
       ['BEHAVIOURAL', 'Preview card shows subtopic label',    () => renderPreview.toString().includes('qp-subtopic')],
+      // CR-022 (cont.): 2D coverage — depth axis + per-child observed coverage map
+      ['BEHAVIOURAL', 'Coverage summary reads depth axis',    () => renderCoverageSummary.toString().includes('depth')],
+      ['BEHAVIOURAL', 'Answer record carries subStrand+depth', () => answerQuestion.toString().includes('subStrand') && answerQuestion.toString().includes('depth')],
+      ['BEHAVIOURAL', 'renderCoverageMastery defined',        () => typeof renderCoverageMastery === 'function'],
+      ['BEHAVIOURAL', 'Coverage map shows observed, not mastery', () => renderCoverageMastery.toString().includes('practise') || renderCoverageMastery.toString().includes('practised')],
     ],
   };
 
@@ -4012,17 +4025,26 @@ function renderPreview() {
 // Counts only non-flagged questions (flagged ones are pending replacement), so the
 // chips reflect what will actually be saved. Each question carries a `subtopic`
 // label from the worker; questions without one group under "Other".
+// CR-022 (cont.): 2D coverage — width (sub-strands) AND depth (cognitive bands). Each
+// generated question now carries `subStrand` (width) and `depth` (one of recall/
+// procedure/application/reasoning); `subtopic` is the deprecated width alias still read as
+// a fallback. Shows a sub-strand chip strip plus a depth-band spread so a parent can see a
+// set isn't all-recall. Counts only non-flagged questions (what will actually be saved).
+const DEPTH_ORDER = ['recall', 'procedure', 'application', 'reasoning'];
 function renderCoverageSummary() {
   const el = document.getElementById('gen-coverage');
   if (!el) return;
   const qs = (S.generatedQuestions || []).filter((_, idx) => !S_flagged.has(idx));
-  const counts = {};
+  const counts = {};   // width: by sub-strand
+  const depths = {};   // depth: by band
   qs.forEach((q) => {
-    const k = (q.subtopic && q.subtopic.trim()) ? q.subtopic.trim() : 'Other';
+    const k = (q.subStrand && q.subStrand.trim()) || (q.subtopic && q.subtopic.trim()) || 'Other';
     counts[k] = (counts[k] || 0) + 1;
+    const d = (q.depth && q.depth.trim()) ? q.depth.trim() : null;
+    if (d) depths[d] = (depths[d] || 0) + 1;
   });
   const keys = Object.keys(counts);
-  // Nothing meaningful to show if the worker supplied no subtopic labels at all.
+  // Nothing meaningful to show if the worker supplied no width labels at all.
   if (!keys.length || (keys.length === 1 && keys[0] === 'Other')) {
     el.classList.add('hidden');
     el.innerHTML = '';
@@ -4032,7 +4054,14 @@ function renderCoverageSummary() {
   const chips = keys.sort((a, b) => counts[b] - counts[a]).map((k) =>
     `<span class="coverage-chip">${escapeHtml(k)}<span class="cov-count">×${counts[k]}</span></span>`
   ).join('');
-  el.innerHTML = `<span class="cov-title">Subtopics covered (${keys.length})</span>${chips}`;
+  // Depth strip — ordered recall→reasoning; only render when the set carries depth tags.
+  const depthKeys = DEPTH_ORDER.filter((d) => depths[d]);
+  const depthStrip = depthKeys.length
+    ? `<div class="cov-depth"><span class="cov-title">Depth</span>${
+        depthKeys.map((d) => `<span class="coverage-chip cov-depth-chip">${d}<span class="cov-count">×${depths[d]}</span></span>`).join('')
+      }</div>`
+    : '';
+  el.innerHTML = `<span class="cov-title">Sub-strands covered (${keys.length})</span>${chips}${depthStrip}`;
 }
 
 function discardQuestion(idx) {
@@ -4618,6 +4647,11 @@ function answerQuestion(idx, el) {
     question:      q.q,
     options:       q.o,
     explanation:   q.e || '',
+    // CR-022 (cont.): carry the 2D coverage tags into the saved answer record — this is
+    // the data the per-child coverage matrix is derived from (worker getChildResults →
+    // buildCoverageMatrix). Omitted when the served question is untagged (legacy).
+    ...(q.subStrand ? { subStrand: q.subStrand } : {}),
+    ...(q.depth ? { depth: q.depth } : {}),
     ...(q._bankId ? { _bankId: q._bankId } : {}),
   });
 
@@ -4696,6 +4730,9 @@ function finishFreeform(gotIt, autoGraded) {
     mode:          'free_form',
     typedAnswer:   S_freeformTyped,
     autoGraded:    autoGraded,
+    // CR-022 (cont.): same 2D coverage tags as the multiple-choice path.
+    ...(q.subStrand ? { subStrand: q.subStrand } : {}),
+    ...(q.depth ? { depth: q.depth } : {}),
     ...(q._bankId ? { _bankId: q._bankId } : {}),
   });
 
@@ -4965,6 +5002,7 @@ function renderProgressScreen(childId) {
 
   drawScoreChart(myResults, childId);
   drawMasteryGrid(myResults, childId);
+  renderCoverageMastery(myResults, childId);
   drawStreakCalendar(childId);
   drawBadgeCollection(childId);
   drawTimeChart(myResults);
@@ -5236,6 +5274,62 @@ function drawMasteryGrid(results, childId) {
   }).join('');
 }
 
+// CR-022 (cont.): OBSERVED depth × width coverage map for a child, derived from the 2D
+// tags (subStrand + depth) on saved answer records (results.answers). This is the
+// frontend twin of coverage.js buildCoverageMatrix/gridStatus — a single HTML page can't
+// require() the node module, so the aggregation is inlined (kept deliberately thin;
+// flagged in the session handover, same one-source-of-truth debt class as DEF-048).
+//
+// AMENDMENT-2 GATE: this shows OBSERVED coverage ("practised"), NOT a mastery judgement,
+// until the depth-tag agreement number is measured and cleared. Promoting to a confident
+// "mastered / reasoning untested" verdict requires recording that number first. Width is
+// always safe; depth is shown as practised cells only.
+function renderCoverageMastery(results, childId) {
+  const el = document.getElementById('coverage-mastery');
+  const card = document.getElementById('coverage-mastery-card');
+  if (!el) return;
+  // Aggregate (subStrand × depth) → attempts from this child's tagged answers.
+  const cells = {};
+  (results || []).forEach(r => {
+    (r.answers || []).forEach(a => {
+      if (!a || !a.subStrand) return;                 // untagged width → off the grid
+      const d = (a.depth && DEPTH_ORDER.includes(a.depth)) ? a.depth : null;
+      if (!d) return;                                  // unknown depth → lights no cell
+      const row = (cells[a.subStrand] = cells[a.subStrand] || {});
+      row[d] = (row[d] || 0) + 1;
+    });
+  });
+  const subStrands = Object.keys(cells);
+  // No depth-tagged history yet (e.g. all tutorials predate CR-022) → hide the card
+  // rather than showing an empty grid that could read as "nothing learned".
+  if (subStrands.length === 0) { if (card) card.classList.add('hidden'); el.innerHTML = ''; return; }
+  if (card) card.classList.remove('hidden');
+
+  const head = `<tr><th style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted);">Sub-skill</th>${
+    DEPTH_ORDER.map(d => `<th style="padding:6px 8px;font-size:11px;color:var(--muted);text-transform:capitalize;">${d}</th>`).join('')
+  }</tr>`;
+  const rows = subStrands.map(s => {
+    const tds = DEPTH_ORDER.map(d => {
+      const n = (cells[s] || {})[d] || 0;
+      const bg = n ? 'var(--green-light)' : 'var(--bg)';
+      const mark = n ? `✓<span style="font-size:9px;color:var(--muted);"> ×${n}</span>` : '<span style="color:var(--border);">—</span>';
+      return `<td style="text-align:center;padding:6px 8px;background:${bg};border:1px solid var(--border);border-radius:4px;font-size:12px;">${mark}</td>`;
+    }).join('');
+    return `<tr><td style="padding:6px 8px;font-size:12px;font-weight:700;">${escapeHtml(s)}</td>${tds}</tr>`;
+  }).join('');
+
+  // Observed recommendation (non-judgemental, per the amendment-2 gate). Names sub-skills
+  // with any untested depth cell so the parent sees what's left to practise.
+  const gaps = subStrands.filter(s => DEPTH_ORDER.some(d => !((cells[s] || {})[d])));
+  const note = gaps.length
+    ? `Still to practise at some depths: <strong>${gaps.slice(0, 4).map(escapeHtml).join(', ')}</strong>${gaps.length > 4 ? '…' : ''}. Practised cells aren't a mastery score yet — they show coverage, not depth-judged mastery.`
+    : 'Every sub-skill shown has been practised across all four depths.';
+
+  el.innerHTML =
+    `<div style="overflow-x:auto;"><table style="border-collapse:separate;border-spacing:4px;width:100%;">${head}${rows}</table></div>` +
+    `<p style="font-size:11px;color:var(--muted);margin-top:10px;">${note}</p>`;
+}
+
 // Streak calendar — last 28 days (§5.5)
 function drawStreakCalendar(childId) {
   const cal = document.getElementById('streak-calendar');
@@ -5462,6 +5556,7 @@ function runTesterM3(screen) {
       ['STRUCTURAL',  'Progress screen child selector present',  () => !!document.getElementById('prog-child-sel')],
       ['STRUCTURAL',  'Score chart canvas present',              () => !!document.getElementById('chart-scores')],
       ['STRUCTURAL',  'Mastery grid container present',          () => !!document.getElementById('mastery-grid')],
+      ['STRUCTURAL',  'Coverage map container present (CR-022)',  () => !!document.getElementById('coverage-mastery')],
       ['STRUCTURAL',  'Streak calendar container present',       () => !!document.getElementById('streak-calendar')],
       ['STRUCTURAL',  'Badge collection container present',      () => !!document.getElementById('badge-collection')],
       ['STRUCTURAL',  'Time chart canvas present',               () => !!document.getElementById('chart-time')],

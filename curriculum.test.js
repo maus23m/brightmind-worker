@@ -2,7 +2,7 @@
 // Run: node curriculum.test.js
 // Covers validateProposalPayload / parseSweepResult / latestApprovedPerTopic /
 // buildCurriculumGuidance — synchronous, no network.
-const { validateProposalPayload, parseSweepResult, latestApprovedPerTopic, buildCurriculumGuidance } = require("./curriculum");
+const { validateProposalPayload, parseSweepResult, latestApprovedPerTopic, buildCurriculumGuidance, DEPTH_BANDS, normaliseDepth, approvedSubStrandIndex } = require("./curriculum");
 
 let pass = 0, fail = 0;
 function check(name, cond) {
@@ -79,6 +79,33 @@ const goodPayload = {
   check("guidance: lists each approved sub-strand", g.includes("Substitution") && g.includes("Simplifying (collecting like terms)"));
   check("guidance: surfaces misconceptions to avoid", /misconceptions to avoid/i.test(g) && g.includes("5x + 3 = 8x"));
   check("guidance: instructs not to invent others", /do NOT invent others/i.test(g));
+}
+
+// ── CR-022 (cont.): normaliseDepth ──
+{
+  check("depth: 4 bands recall→reasoning", DEPTH_BANDS.join(",") === "recall,procedure,application,reasoning");
+  check("depth: accepts a valid band (case/space tolerant)", normaliseDepth("  Application ") === "application");
+  check("depth: unknown band → null (NOT a band)", normaliseDepth("mastery") === null);
+  check("depth: missing → null (unknown, never 'all covered')", normaliseDepth(undefined) === null && normaliseDepth("") === null);
+}
+
+// ── CR-022 (cont.): approvedSubStrandIndex ──
+{
+  const objs = [{
+    topic: "Expressions & Equations", year_group: 7, status: "approved", version: 1,
+    payload: { sub_strands: [
+      { id: "expanding_single", name: "Expanding a single bracket" },
+      { name: "Substitution" },
+    ] },
+  }];
+  const { byTopic } = approvedSubStrandIndex(objs);
+  const m = byTopic.get("Expressions & Equations");
+  check("index: builds a matcher per approved topic", !!m && m.names.length === 2);
+  check("index: matches by exact name", m.match("Substitution") === "Substitution");
+  check("index: matches case/punctuation-insensitively", m.match("expanding a single bracket") === "Expanding a single bracket");
+  check("index: matches by id slug", m.match("expanding_single") === "Expanding a single bracket");
+  check("index: off-list label → null (kept + warned by caller, not dropped)", m.match("Factorising") === null);
+  check("index: ignores non-approved objects", approvedSubStrandIndex([{ topic: "X", status: "draft", payload: { sub_strands: [{ name: "Y" }] } }]).byTopic.size === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

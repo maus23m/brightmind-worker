@@ -47,9 +47,19 @@ function applyReview(qs, results) {
     let out;
     if (a.pass === false) {
       if (a.rewrite && a.rewrite.q && Array.isArray(a.rewrite.o) && a.rewrite.o.length === 4 && typeof a.rewrite.c === "number") {
-        // Carry forward fields the rewrite payload doesn't include but must survive:
-        // the diagram (svg) and the curriculum-coverage label (subtopic).
-        const rw = { ...a.rewrite, e: a.rewrite.e || q.e, ...(q.svg ? { svg: q.svg } : {}), ...(q.subtopic ? { subtopic: q.subtopic } : {}), _auditRewritten: true };
+        // Carry forward fields the rewrite payload doesn't include but must survive: the
+        // diagram (svg) and the curriculum-coverage tags. CR-022 (cont.): the 2D tags
+        // (subStrand + depth) join subtopic in this carry-forward — same class of fix (an
+        // audit rewrite must not silently strip the coverage tags). The rewrite keeps the
+        // same sub-skill/depth: the auditor fixes wording/answer, not what is being tested.
+        const rw = {
+          ...a.rewrite, e: a.rewrite.e || q.e,
+          ...(q.svg ? { svg: q.svg } : {}),
+          ...(q.subStrand ? { subStrand: q.subStrand } : {}),
+          ...(q.depth ? { depth: q.depth } : {}),
+          ...(q.subtopic ? { subtopic: q.subtopic } : {}),
+          _auditRewritten: true,
+        };
         // DEF-041 guard: never let an audit rewrite silently override a
         // compute-verified answer index. If the engine verified c, keep c.
         if ((q._computeVerified || q._computeCorrected) && rw.c !== q.c) {
