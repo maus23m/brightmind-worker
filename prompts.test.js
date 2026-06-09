@@ -100,6 +100,27 @@ const draw = read("diagram_system.txt");
     /"subtopic":/.test(gen));
 }
 
+// ── 6b. CR-022 (cont.): 2D tag — subStrand + depth, anchored, with coverage-target driver ──
+{
+  check("gen: requires a subStrand field (width axis)", /"subStrand"/.test(gen));
+  check("gen: requires a depth field (cognitive axis)", /"depth"/.test(gen));
+  check("gen: names all four depth bands",
+    /recall/.test(gen) && /procedure/.test(gen) && /application/.test(gen) && /reasoning/.test(gen));
+  check("gen: depth is anchored to exemplars, not free-labelled",
+    /anchored exemplars/i.test(gen) && /match the pattern/i.test(gen));
+  check("gen: states depth is NOT difficulty (orthogonal axis)",
+    /DEPTH IS NOT DIFFICULTY/i.test(gen));
+  check("gen: instructs spreading across BOTH axes (no all-recall set)",
+    /SPREAD ACROSS BOTH AXES/i.test(gen));
+  check("gen: keeps subtopic as a deprecated alias of subStrand",
+    /deprecated alias/i.test(gen));
+  check("gen: schema summary includes subStrand + depth",
+    /"subStrand":/.test(gen) && /"depth":/.test(gen));
+  // Slice D width-adaptive driver placeholder.
+  check("gen: has the {{coverage_target}} steering placeholder",
+    /\{\{coverage_target\}\}/.test(gen));
+}
+
 // ── 5. Slice 2: curriculum steering placeholder + fallback wording ──
 {
   check("gen: has the {{curriculum}} steering placeholder",

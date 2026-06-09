@@ -37,6 +37,22 @@ function check(name, cond) {
   check("passthrough: subtopic preserved", r.subtopic === "Substitution");
 }
 
+// ── 2c. CR-022 (cont.): audit rewrite preserves the 2D coverage tags ──
+{
+  const q = { q: "old", o: ["a", "b", "c", "d"], c: 0, e: "e", subStrand: "Substitution", depth: "reasoning", subtopic: "Substitution" };
+  const rewrite = { q: "new", o: ["w", "x", "y", "z"], c: 1, e: "ne" };
+  const [r] = applyReview([q], [{ i: 0, audit: { pass: false, rewrite }, child: { pass: true } }]);
+  check("rewrite: subStrand preserved", r.subStrand === "Substitution");
+  check("rewrite: depth preserved", r.depth === "reasoning");
+}
+
+// ── 2d. Pass-through preserves the 2D tags ──
+{
+  const q = { q: "q", o: ["a", "b", "c", "d"], c: 0, e: "e", subStrand: "Simplifying", depth: "procedure" };
+  const [r] = applyReview([q], [{ i: 0, audit: { pass: true }, child: { pass: true } }]);
+  check("passthrough: subStrand + depth preserved", r.subStrand === "Simplifying" && r.depth === "procedure");
+}
+
 // ── 2b. Audit rewrite missing e → defaults to original e ──
 {
   const q = { q: "old", o: ["a", "b", "c", "d"], c: 0, e: "keep me" };

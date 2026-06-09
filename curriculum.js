@@ -91,9 +91,61 @@ function buildCurriculumGuidance(objects) {
   );
 }
 
+// ── CR-022 (cont.): depth axis + sub-strand alignment ──
+// The four cognitive-demand bands (the matrix's depth axis), orthogonal to the
+// Easy/Medium/Hard difficulty dial. Single source of truth, shared by the worker
+// (validation), coverage.js (matrix) and the tests.
+const DEPTH_BANDS = ["recall", "procedure", "application", "reasoning"];
+
+// Normalise a depth label to one of DEPTH_BANDS, or null when it is missing/unknown.
+// Null means "depth unknown" — NEVER treated as "all bands covered" downstream (DEF-049).
+function normaliseDepth(d) {
+  if (typeof d !== "string") return null;
+  const k = d.trim().toLowerCase();
+  return DEPTH_BANDS.includes(k) ? k : null;
+}
+
+// Slugify a label the same way validateProposalPayload derives sub-strand ids, so a
+// generator-supplied subStrand can be matched to an approved sub-strand by id OR name.
+function slugify(s) {
+  return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+
+// Build a per-topic matcher over the APPROVED objects. The worker uses it to align a
+// generator-supplied `subStrand` to the canonical human-approved sub-strand name (so the
+// coverage matrix keys on the same names the curriculum specialist signed off), or to
+// detect an off-list label (kept + warned, never dropped — steer-with-fallback). Pure.
+// Returns { byTopic: Map<topic, { names:[...], match(label)→canonicalName|null }> }.
+function approvedSubStrandIndex(objects) {
+  const byTopic = new Map();
+  for (const o of latestApprovedPerTopic(objects)) {
+    const subs = Array.isArray(o.payload?.sub_strands) ? o.payload.sub_strands : [];
+    // lookup: normalised name OR id → canonical name
+    const lookup = new Map();
+    const names = [];
+    for (const s of subs) {
+      if (!s || !s.name) continue;
+      names.push(s.name);
+      lookup.set(slugify(s.name), s.name);
+      if (s.id) lookup.set(slugify(s.id), s.name);
+    }
+    byTopic.set(o.topic, {
+      names,
+      match(label) {
+        if (!label) return null;
+        return lookup.get(slugify(label)) || null;
+      },
+    });
+  }
+  return { byTopic };
+}
+
 module.exports = {
   validateProposalPayload,
   parseSweepResult,
   latestApprovedPerTopic,
   buildCurriculumGuidance,
+  DEPTH_BANDS,
+  normaliseDepth,
+  approvedSubStrandIndex,
 };

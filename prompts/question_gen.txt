@@ -12,11 +12,25 @@ PRINCIPLES:
 
 CURRICULUM COVERAGE — SPREAD ACROSS SUBTOPICS:
 {{curriculum}}
+{{coverage_target}}
 A topic name like "Expressions and Equations" is an umbrella over several distinct National-Curriculum sub-skills. A tutorial that drills only one of them (e.g. only "solving linear equations") silently leaves core sub-skills untaught. Before writing questions:
 1. If an APPROVED CURRICULUM block appears above, treat its sub-strands as the authoritative list for each named topic — cover exactly those and do NOT invent others. Otherwise (no approved block for a topic), identify the distinct Year {{year}} sub-skills that make up the topic yourself. For example, Year 7 "Expressions and Equations" includes: simplifying expressions, substitution, solving linear equations, EXPANDING SINGLE BRACKETS, EXPANDING DOUBLE BRACKETS, and factorising. Do NOT omit core procedural sub-skills like expanding brackets.
 2. Distribute the {{count}} questions ACROSS those sub-skills so the set spans the topic instead of clustering on one. If {{count}} is smaller than the number of sub-skills, cover as many DISTINCT sub-skills as possible (do not repeat one while leaving others untouched). If larger, balance roughly evenly across them.
 3. When several topics are requested, spread across the topics AND each topic's sub-skills.
-4. Every question MUST include a "subtopic" field: a short, specific sub-skill label naming what the question actually tests (e.g. "Expanding double brackets", "Solving linear equations", "Substitution"). Use the umbrella topic name only if no finer sub-skill applies. This label is shown to parents so they can see what the tutorial covers — make it accurate and specific.
+4. Every question MUST be tagged on TWO axes — its WIDTH (which sub-skill) and its DEPTH (cognitive demand):
+   - "subStrand": a short, specific sub-skill label naming what the question actually tests (e.g. "Expanding single brackets", "Solving linear equations", "Substitution"). When an APPROVED CURRICULUM block appears above, copy ONE of its sub-strand names VERBATIM (do not paraphrase). Otherwise use your own specific sub-skill label. Use the umbrella topic name only if no finer sub-skill applies. This is shown to parents — make it accurate and specific.
+   - "depth": EXACTLY one of "recall", "procedure", "application", "reasoning". Match the question to the band whose worked exemplar it most resembles (below) — do NOT invent a band or guess loosely. The bands are:
+       • recall — knows a convention/fact directly.
+       • procedure — executes a standard method in a single step.
+       • application — applies in context, or combines two steps.
+       • reasoning — multi-step, work backwards, justify, or find/explain an error.
+     DEPTH IS NOT DIFFICULTY. A question can be hard recall or easy reasoning; difficulty is set separately by the {{difficulty}} level. Tag depth by the KIND of thinking required, using these anchored exemplars (Year 7 Expressions & Equations — match the pattern, not the topic):
+       • recall — "Are 4a and 3a like terms?" (knows the definition directly)
+       • procedure — "Simplify 5x + 2x − x." (one standard step)
+       • application — "A taxi charges £3 plus £2 per mile. Write an expression for a journey of m miles." (apply in context) / "Solve 3x + 4 = 19." (combine two steps)
+       • reasoning — "A student simplifies 5x + 3 to 8x. Explain the mistake." (find and justify an error) / "I think of a number, multiply by 4, subtract 5, result 23. Form an equation, solve it, and check." (multi-step, work backwards, verify)
+   - SPREAD ACROSS BOTH AXES. Do not cluster every question at one depth band — a set that is all "recall" leaves application and reasoning untested even if every sub-skill is touched. Mix the depth bands across the set as the {{count}} allows, weighted toward what the {{difficulty}} level implies.
+   - Also emit a "subtopic" field equal to your "subStrand" value (a deprecated alias kept for one release so older screens keep working).
 
 ANSWER VERIFICATION — READ CAREFULLY:
 Every question you produce will be checked by an automatic verifier before it reaches a child. To make that possible, every question MUST include a "verify" field that says how its answer can be checked. There are three values:
@@ -365,6 +379,6 @@ BAD diagramPrompt (count question):
 Keep diagrams simple and focused. One chart, one shape, one scene. Not four things side by side.
 {{rejections}}{{exclusions}}
 
-Return ONLY a JSON array, no markdown, no backticks. Every object MUST include the "verify" field AND the "subtopic" field (a short, specific sub-skill label — see CURRICULUM COVERAGE). Objects with verify "arithmetic" MUST include the "compute" object — single-op, formula, or solve_for; objects with verify "equation_balance" MUST include an equation_balance compute object:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","subtopic":"Expanding single brackets","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist...","verify":"arithmetic","compute":{"op":"range","inputs":[1,2,3]}}]
-[{"q":"formula question","o":["A","B","C","D"],"c":1,"e":"explanation","subtopic":"Pythagoras' theorem","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":{"a":6,"b":8}}}]
+Return ONLY a JSON array, no markdown, no backticks. Every object MUST include the "verify" field, the "subStrand" field (the sub-skill — see CURRICULUM COVERAGE), the "depth" field (one of recall/procedure/application/reasoning), and the "subtopic" field (= subStrand, deprecated alias). Objects with verify "arithmetic" MUST include the "compute" object — single-op, formula, or solve_for; objects with verify "equation_balance" MUST include an equation_balance compute object:
+[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","subStrand":"Expanding single brackets","depth":"procedure","subtopic":"Expanding single brackets","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist...","verify":"arithmetic","compute":{"op":"range","inputs":[1,2,3]}}]
+[{"q":"formula question","o":["A","B","C","D"],"c":1,"e":"explanation","subStrand":"Pythagoras' theorem","depth":"application","subtopic":"Pythagoras' theorem","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":{"a":6,"b":8}}}]
