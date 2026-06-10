@@ -12,7 +12,7 @@ function check(name, cond) {
   else { fail++; console.log(`FAIL  ${name}`); }
 }
 
-const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "curriculum_taxonomy.json"), "utf-8"));
+const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "curriculum_taxonomy.json"), "utf-8"));
 
 // ── taxonomy file shape ──
 {
@@ -64,6 +64,21 @@ const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "curriculum_tax
 
   const existingSet = planTargets({ topics, requested: null, existing: new Set(["A"]), limit: null });
   check("plan: accepts a Set for existing", existingSet.toSweep.join(",") === "B,C,D");
+}
+
+// ── DEF-050: the in-app Run sweep panel must exist in frontend/admin.html ──
+// The run-sweep Edge Function lives server-side (deployed via MCP); only these
+// structural assertions tie its UI half to the repo. They caught nothing when the
+// panel was stranded on a merged branch — now they fail loudly if it goes missing.
+{
+  const admin = fs.readFileSync(path.join(__dirname, "frontend", "admin.html"), "utf-8");
+  check("DEF-050: admin has subject selector (sw-subject)", admin.includes('id="sw-subject"'));
+  check("DEF-050: admin has year selector (sw-year)", admin.includes('id="sw-year"'));
+  check("DEF-050: admin has topic selector (sw-topic)", admin.includes('id="sw-topic"'));
+  check("DEF-050: admin has Run sweep button (sw-run)", admin.includes('id="sw-run"'));
+  check("DEF-050: admin calls the run-sweep Edge Function", admin.includes("/functions/v1/run-sweep"));
+  check("DEF-050: admin fetches the canonical taxonomy json", admin.includes("curriculum_taxonomy.json"));
+  check("DEF-050: year selector covers Years 2-11", admin.includes("[2,3,4,5,6,7,8,9,10,11]"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

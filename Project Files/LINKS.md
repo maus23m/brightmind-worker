@@ -19,13 +19,20 @@ Admin login: `maus23@gmail.com` (temp password set out-of-band; password reset i
 |---|---|
 | Worker repo | `maus23m/brightmind-worker` (GCP Cloud Run) |
 | Supabase project | `rtyvomkhajyinlycgjzm` (brightmind-v2) |
+| Edge functions | `generate-questions`, `job-status`, `run-sweep` (admin-gated curriculum sweep) |
+
+**Run sweep:** the admin "Run sweep" button (Curriculum tab) calls the `run-sweep` Edge
+Function, which reads the project-wide `ANTHROPIC_API_KEY` Supabase secret (already
+configured — no setup needed). Confirmed working. The CLI sweep
+(`node scripts/curriculum_sweep.js …`) uses your shell env instead.
 
 ## Pull requests
 | PR | Title | State |
 |---|---|---|
 | #15 | Admin backend Slice 1 — runtime_config dials (+ CLAUDE.md) | merged |
 | #16 | ADMIN-2 — Curriculum curation & approval | merged |
-| #17 | Curriculum sweep — per-subject+year batch mode | open (from `claude/optimistic-allen-dsblK`) |
+| #17 | Curriculum sweep — per-subject+year batch mode | merged — but commits `b751b0b`/`0da3fbd` (in-app Run sweep) were pushed after the merge and stranded on the branch (DEF-050) |
+| #18 | CR-022 (cont.) — depth/width coverage + mastery model | merged |
 
-New PR for the active branch (if not yet created):
-https://github.com/maus23m/brightmind-worker/compare/main...claude/optimistic-allen-dsblK?expand=1
+Active branch (DEF-050 fix — restores the in-app Run sweep panel):
+https://github.com/maus23m/brightmind-worker/compare/main...claude/sleepy-rubin-dgffc0?expand=1
