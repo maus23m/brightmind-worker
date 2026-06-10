@@ -31,7 +31,8 @@ configured — no setup needed). Confirmed working. The CLI sweep
 |---|---|---|
 | #15 | Admin backend Slice 1 — runtime_config dials (+ CLAUDE.md) | merged |
 | #16 | ADMIN-2 — Curriculum curation & approval | merged |
-| #17 | Curriculum sweep — per-subject+year batch mode | open (from `claude/optimistic-allen-dsblK`) |
+| #17 | Curriculum sweep — per-subject+year batch mode | merged — but commits `b751b0b`/`0da3fbd` (in-app Run sweep) were pushed after the merge and stranded on the branch (DEF-050) |
+| #18 | CR-022 (cont.) — depth/width coverage + mastery model | merged |
 
-New PR for the active branch (if not yet created):
-https://github.com/maus23m/brightmind-worker/compare/main...claude/optimistic-allen-dsblK?expand=1
+Active branch (DEF-050 fix — restores the in-app Run sweep panel):
+https://github.com/maus23m/brightmind-worker/compare/main...claude/sleepy-rubin-dgffc0?expand=1
