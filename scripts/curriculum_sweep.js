@@ -187,7 +187,7 @@ async function runSingle(args) {
 
 async function runBatch(args) {
   const { subject, year, scheme = "NC", sources } = args;
-  const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "curriculum_taxonomy.json"), "utf-8"));
+  const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "frontend", "curriculum_taxonomy.json"), "utf-8"));
   const topics = topicsFor(taxonomy, subject, year);
   if (!topics.length) { console.error(`[sweep] no topics in taxonomy for ${subject} year ${year}`); process.exit(2); }
 
