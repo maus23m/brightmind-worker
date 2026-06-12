@@ -175,5 +175,27 @@ const indexSrc = fs.readFileSync(path.join(__dirname, "index.js"), "utf-8");
     /final\.length === 0[\s\S]{0,400}status.*failed/.test(indexSrc));
 }
 
+// ── 10. DEF-034: top-up questions routed through Stage 4 review ──
+// Guards that top-up output passes through review() before being banked,
+// not written directly from processDiagrams (the pre-fix behaviour).
+{
+  check("index: top-up calls review() after processDiagrams (DEF-034)",
+    /topupWithDiagrams[\s\S]{0,200}review\(apiKey, topupWithDiagrams/.test(indexSrc));
+  check("index: top-up filters audit/child failures before banking",
+    /topupPassed.*filter.*_auditFailed.*_childFailed/.test(indexSrc));
+}
+
+// ── 11. DEF-035: diagramPrompt threaded into the review payload ──
+// Guards that buildReviewQuestions carries diagramPrompt so the auditor can
+// check scenario/data consistency between the question and the diagram drawn.
+{
+  const reviewSrc = fs.readFileSync(path.join(__dirname, "review.js"), "utf-8");
+  const reviewTxt = fs.readFileSync(path.join(__dirname, "prompts", "review.txt"), "utf-8");
+  check("review.js: buildReviewQuestions includes diagramPrompt field (DEF-035)",
+    /diagramPrompt\s*:\s*q\.diagramPrompt/.test(reviewSrc));
+  check("review.txt: criterion 3 checks diagramPrompt for scenario/data mismatch",
+    /diagramPrompt.*same.*scenario|same.*data.*diagramPrompt/is.test(reviewTxt));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

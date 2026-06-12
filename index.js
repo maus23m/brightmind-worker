@@ -687,8 +687,12 @@ functions.http("worker", async (req, res) => {
         // DEF-041: top-up questions go through the compute engine too — reject failures.
         const topupVerified = verify(topup, subject).filter((q) => !q._computeFailed);
         const topupWithDiagrams = await processDiagrams(apiKey, topupVerified, yr, subject, cfg);
+        // DEF-034: route top-up through Stage 4 (Audit + Child Agent) — same as the main path.
+        const topupReviewed = await review(apiKey, topupWithDiagrams, yr, subject, cfg);
+        const topupPassed = topupReviewed.filter((q) => !q._auditFailed && !q._childFailed);
+        console.log(`[Job ${jobId}] Top-up Stage 4: ${topupPassed.length}/${topupReviewed.length} passed`);
         const es = new Set(final.map((q) => q.q?.trim().toLowerCase().slice(0, 80)));
-        const fresh = dedup(topupWithDiagrams).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
+        const fresh = dedup(topupPassed).filter((q) => !es.has(q.q?.trim().toLowerCase().slice(0, 80)));
         final = [...final, ...fresh.slice(0, count - final.length)];
         await bankWrite(url, key, fresh, subject, yr, topics, difficulty);
       } catch (e) { console.error(`[Job ${jobId}] Top-up error:`, e.message); }
