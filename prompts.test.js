@@ -185,6 +185,16 @@ const indexSrc = fs.readFileSync(path.join(__dirname, "index.js"), "utf-8");
     /topupPassed.*filter.*_auditFailed.*_childFailed/.test(indexSrc));
 }
 
+// ── 12. DEF-038: plant-cell diagram example is data-rich, not decorative ──
+// Guards that the plant-cell GOOD example carries specific measurable quantities
+// (chloroplast count + vacuole %) so a child can derive the answer from the diagram.
+{
+  check("gen: plant-cell example specifies a chloroplast count (DEF-038)",
+    /chloroplasts.*5 visible|5.*chloroplasts/i.test(gen));
+  check("gen: plant-cell example specifies a vacuole measurement (DEF-038)",
+    /Vacuole.*60%|60%.*vacuole/i.test(gen));
+}
+
 // ── 11. DEF-035: diagramPrompt threaded into the review payload ──
 // Guards that buildReviewQuestions carries diagramPrompt so the auditor can
 // check scenario/data consistency between the question and the diagram drawn.

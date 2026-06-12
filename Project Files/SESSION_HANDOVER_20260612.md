@@ -21,22 +21,29 @@ Top-up questions previously went `generate → compute → processDiagrams → b
 
 Defect log updated: DEF-034 marked **RESOLVED (12 Jun 2026)**.
 
+### Step 4 (same session): DEF-038 — Fix decorative plant-cell diagram example
+
+Re-audit found the nutrition/digestion example was already data-rich. The **plant-cell example** (`question_gen.txt` lines 283-292) was the remaining decorative one — labels only, no counts. Fixed by:
+- Prose: "exactly 5 small oval chloroplasts" + vacuole "fills about 60% of the cell area"
+- Label whitelist: `Vacuole — '60% of cell area'` and `Chloroplasts — '5 visible'`
+
+Follows the adjacent atom example pattern (explicit counts in both prose and labels). DEF-038 marked RESOLVED.
+
 ## Final state this session
 
-- Branch: `claude/next-steps-planning-iu0n39`
-- `npm test` green: **compute 70 + review 33 + prompts 55 + config 16 + curriculum 30 + sweep 27 + coverage 36 = 267 passed, 0 failed**
+- Branch: `claude/next-steps-planning-iu0n39` (PR #20)
+- `npm test` green: **compute 70 + review 33 + prompts 57 + config 16 + curriculum 30 + sweep 27 + coverage 36 = 269 passed, 0 failed**
 - `node --check index.js` clean
 
-## Open work (remaining next-steps plan)
+## Open work
 
 | Step | Item | Status |
 |---|---|---|
 | 2 | CR-022 final close — run `scripts/depth_tag_check.js`, record agreement number | PENDING (operator action) |
-| 5 | DEF-038 — fix nutrition diagram example (decorative, no measurable data) | OPEN, MEDIUM |
 
 ## Still open defects
-- DEF-036, DEF-038, DEF-040 (awaiting visual QA), DEF-047, DEF-048, DEF-049
+- DEF-036, DEF-040 (awaiting visual QA), DEF-047, DEF-048, DEF-049
 
 ## Notes for next session
-- Step 2 (depth_tag_check.js) requires `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` pointing at prod project `rtyvomkhajyinlycgjzm`. Run: `SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/depth_tag_check.js`. Record the output agreement percentage in `Project Files/CR_LOG.md` CR-022 row and close DEF-049.
-- DEF-038 is the next prompt fix — the nutrition/digestion diagram example in `question_gen.txt` is decorative (labels organs but no measurable data; child cannot derive the answer). Rewrite with quantitative data.
+- Only remaining code-gated item: operator runs `node scripts/depth_tag_check.js` with Supabase creds (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` for project `rtyvomkhajyinlycgjzm`) → records agreement %, updates `Project Files/CR_LOG.md` CR-022 row, closes DEF-049.
+- All other remaining open defects (DEF-036, DEF-047, DEF-048) are MINOR with existing mitigations. DEF-040 awaits visual QA by the owner.
