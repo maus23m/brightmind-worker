@@ -38,18 +38,30 @@ New CR from owner: the sweep skipped any topic already pending/approved with no 
 
 Tester: `sweep.test.js` 27 → 37. **DEPLOY PENDING:** the Edge Function redeploy was permission-blocked in-session — until redeployed, the checkbox is a safe no-op (live function ignores the unknown `force` field and keeps skipping).
 
+### Step 6 (same session): CR-032 — Subtopic selection in the tutorial wizard
+
+New CR from owner: expand each selected topic into its approved sub-strands in wizard step 2; parent can deselect; all selected by default. Built fail-open end-to-end:
+- **Frontend** (`frontend/index.html`): `#subtopic-panel` + `loadApprovedSubStrands` / `renderSubtopicPanel` / `onSubtopicToggle`; hooks in all three topic-mutation paths; step-2 gate (≥1 subtopic per expandable topic); `subtopics` in the job payload. +5 wizard self-tests.
+- **Worker** (`index.js` + `curriculum.js`): new pure `filterApprovedSubStrands` narrows approved objects to the parent's selection (name/id slug match, misconception pruning, zero-match fail-open); applied before the coverage merge so the CR-022 gap driver honours it too. +15 curriculum tests.
+- **Migration** `0004_subtopic_selection.sql`: `generation_jobs.subtopics jsonb` + authenticated read of approved `curriculum_objects` (currently admin-only RLS).
+
+**TWO DEPLOY DEPENDENCIES (both safe no-ops until done):**
+1. Apply migration 0004 (MCP blocked in-session). Without it the panel never shows (RLS blocks the read).
+2. Update the `generate-questions` Edge Function (deployed-only, source NOT in repo — same DEF-048/DEF-050 class) to copy `subtopics` from the request body into its `generation_jobs` insert. One-line change; without it the worker never sees the field and fails open.
+
 ## Final state this session
 
 - Branch: `claude/next-steps-planning-iu0n39` (PR #20)
-- `npm test` green: **compute 70 + review 33 + prompts 57 + config 16 + curriculum 30 + sweep 37 + coverage 36 = 279 passed, 0 failed**
-- `node --check` clean (index.js, CLI, admin.html inline script)
+- `npm test` green: **compute 70 + review 33 + prompts 57 + config 16 + curriculum 45 + sweep 37 + coverage 36 = 294 passed, 0 failed**
+- `node --check` clean (index.js, curriculum.js, CLI, admin.html + index.html inline scripts)
 
 ## Open work
 
 | Item | Status |
 |---|---|
-| CR-031 Edge Function redeploy (`run-sweep` to `rtyvomkhajyinlycgjzm`) | PENDING — MCP deploy permission denied in-session; owner to deploy or approve |
-| CR-022 final close — run `scripts/depth_tag_check.js`, record agreement number | PENDING (operator action; in-session Supabase MCP reads also blocked by approval gate) |
+| CR-031 Edge Function redeploy (`run-sweep` to `rtyvomkhajyinlycgjzm`) | PENDING — Supabase MCP approval gate blocked all calls in-session; owner to deploy or approve the connection |
+| CR-032 migration 0004 apply + `generate-questions` Edge Function update (copy `subtopics` body field into the `generation_jobs` insert) | PENDING — same MCP block; function source not in repo |
+| CR-022 final close — run `scripts/depth_tag_check.js`, record agreement number | PENDING (operator action; in-session Supabase MCP reads also blocked) |
 
 ## Still open defects
 - DEF-036, DEF-040 (awaiting visual QA), DEF-047, DEF-048, DEF-049

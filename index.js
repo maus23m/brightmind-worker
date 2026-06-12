@@ -16,7 +16,7 @@ const fs = require("fs");
 const path = require("path");
 // Curriculum curation (Slice 2): pure steering logic shared with the offline sweep.
 // CR-022 (cont.): + sub-strand alignment and the depth-band normaliser for 2D tagging.
-const { buildCurriculumGuidance, approvedSubStrandIndex, normaliseDepth } = require("./curriculum");
+const { buildCurriculumGuidance, approvedSubStrandIndex, normaliseDepth, filterApprovedSubStrands } = require("./curriculum");
 // CR-022 (cont.): per-child coverage matrix + width-adaptive driver (pure, see coverage.js).
 const { buildCoverageMatrix, buildCoverageTargetGuidance, untestedCells } = require("./coverage");
 
@@ -571,7 +571,10 @@ functions.http("worker", async (req, res) => {
 
     await updateJob(url, key, jobId, { status: "processing", started_at: new Date().toISOString() });
 
-    const { subject, year_group: yr, topics, difficulty, question_count: count, child_id: childId, previous_ids: previousIds } = job;
+    // CR-032: `subtopics` is the parent's per-topic sub-strand selection from the
+    // tutorial wizard ({ "<topic>": ["<sub-strand>", ...] }); absent/null on jobs from
+    // older clients or topics without an approved object — fail-open, full curriculum.
+    const { subject, year_group: yr, topics, difficulty, question_count: count, child_id: childId, previous_ids: previousIds, subtopics } = job;
 
     // Resolve the live dials from runtime_config (admin backend), each falling back to
     // its env/hardcoded default. Concurrency-safe: cfg is per-job, never module state.
@@ -589,9 +592,20 @@ functions.http("worker", async (req, res) => {
     // Slice 2: resolve approved curriculum objects for the requested topics. Steers
     // generation toward human-signed-off sub-strands; topics with no approved object
     // fall back to the generator's own enumeration (no behaviour change).
-    const curriculum = await getApprovedCurriculum(url, key, subject, yr, topics);
+    const approvedRaw = await getApprovedCurriculum(url, key, subject, yr, topics);
+    // CR-032: narrow each approved object to the parent's selected sub-strands. Fail-open:
+    // no selection / zero-match selection leaves the object unchanged. Applied BEFORE the
+    // coverage merge below so the gap driver also targets only selected sub-strands.
+    const curriculum = filterApprovedSubStrands(approvedRaw, subtopics);
     const covered = new Set(curriculum.filter((c) => c.status === "approved").map((c) => c.topic));
     console.log(`[Job ${jobId}] Curriculum: ${covered.size}/${topics.length} topic(s) steered by approved objects${covered.size ? ` (${[...covered].join(", ")})` : ""}, ${topics.length - covered.size} self-enumerated`);
+    if (subtopics && typeof subtopics === "object") {
+      curriculum.forEach((o, i) => {
+        const before = (approvedRaw[i]?.payload?.sub_strands || []).length;
+        const after = (o.payload?.sub_strands || []).length;
+        if (after < before) console.log(`[Job ${jobId}] Subtopics (CR-032): "${o.topic}" narrowed to ${after}/${before} parent-selected sub-strand(s)`);
+      });
+    }
 
     // CR-022 (cont.) Slices D+E: build the child's coverage matrix (projection over recent
     // results) so generation can be steered toward untested/weak cells (coverageTarget,

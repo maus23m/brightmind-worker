@@ -305,6 +305,10 @@ body.nav-busy .btn, body.nav-busy .nav-btn, body.nav-busy .quick-btn { cursor: p
 .tp-partial { background: var(--amber-light); color: #7B5800; }
 .tp-none { background: var(--bg); color: var(--muted); }
 .selected-count { font-size: 12px; color: var(--muted); margin-top: 8px; font-style: italic; }
+/* CR-032: subtopic fine-tune panel (wizard step 2) */
+.subtopic-group { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
+.subtopic-group-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.subtopic-item { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; margin: 2px 12px 2px 0; cursor: pointer; }
 
 /* Accordion drilldown */
 .cat-card { border: 2px solid var(--border); border-radius: 14px; margin-bottom: 10px; overflow: hidden; transition: border-color .2s; }
@@ -1018,10 +1022,17 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
       <h2>Select Topics</h2>
       <p class="wc-desc">Choose one or more topics. The AI will write questions specifically covering your selection.</p>
       <div id="topic-container"><!-- rendered by JS --></div>
+      <!-- CR-032: expand selected topics into approved sub-strands (from the curriculum sweep) -->
+      <div id="subtopic-panel" class="hidden">
+        <h3 style="margin:16px 0 4px">Fine-tune subtopics</h3>
+        <p class="wc-desc">These subtopics come from the approved curriculum. All are included by default — untick any you want to leave out.</p>
+        <div id="subtopic-container"></div>
+      </div>
       <div class="selected-count" id="sel-count">No topics selected yet</div>
       <div class="wizard-actions">
         <button class="btn btn-secondary" onclick="wizBack(2)">← Back</button>
         <div id="s2-err" class="form-error">Please select at least one topic</div>
+        <div id="s2-sub-err" class="form-error">Keep at least one subtopic ticked for each topic</div>
         <button class="btn btn-primary ml-auto" onclick="wizNext(2)">Next: Configure →</button>
       </div>
     </div>
@@ -1588,6 +1599,7 @@ const S = {
   subject: null,
   year: null,
   topics: [],
+  subtopics: {},   // CR-032: { "<topic>": ["<sub-strand name>", ...] } — approved-curriculum topics only
   difficulty: 'medium',
   questionCount: 10,
   assignedChildId: null,
@@ -2106,6 +2118,11 @@ function runTester(screen) {
       ['BEHAVIOURAL', 'Accordion state resets on wizard open',() => goToWizard.toString().includes('S_openCat')],
       ['BEHAVIOURAL', 'Agent logging on topic select',        () => selectTopic.toString().includes('logAgent')],
       ['BEHAVIOURAL', 'Curriculum Agent logs category open',  () => toggleCat.toString().includes('logAgent')],
+      ['STRUCTURAL',  'CR-032: subtopic panel present',       () => !!document.getElementById('subtopic-panel')],
+      ['BEHAVIOURAL', 'CR-032: renderSubtopicPanel defined',  () => typeof renderSubtopicPanel === 'function'],
+      ['BEHAVIOURAL', 'CR-032: default selects ALL subtopics',() => renderSubtopicPanel.toString().includes('.slice()')],
+      ['BEHAVIOURAL', 'CR-032: subtopics ride in the job payload', () => callEdgeFunction.toString().includes('subtopics')],
+      ['BEHAVIOURAL', 'CR-032: step-2 gate keeps ≥1 subtopic per topic', () => wizNext.toString().includes('s2-sub-err')],
     ],
     test: [
       ['STRUCTURAL',  'Question text element present',        () => !!document.getElementById('q-text')],
@@ -3436,6 +3453,7 @@ function selectTopic(topic, catName, el) {
   if (S.topics.length === 0) S_activeCat = null;
   updateCatHeader(catName);
   updateSelCount();
+  renderSubtopicPanel(); // CR-032
 }
 
 function selectAllInCat(catName) {
@@ -3453,6 +3471,7 @@ function selectAllInCat(catName) {
   logAgent('curriculum', `All topics selected in ${catName}: ${topics.length} topic(s)`, 'ok');
   updateCatHeader(catName);
   updateSelCount();
+  renderSubtopicPanel(); // CR-032
 }
 
 function clearCat(catName) {
@@ -3469,6 +3488,71 @@ function clearCat(catName) {
   logAgent('curriculum', `Category cleared: ${catName}`, 'warn');
   updateCatHeader(catName);
   updateSelCount();
+  renderSubtopicPanel(); // CR-032
+}
+
+// ════════════════════════════════════════════════════
+// CR-032: SUBTOPIC SELECTION (wizard step 2)
+// Expands each selected topic into its APPROVED curriculum sub-strands (from the
+// sweep → human-approval loop) and lets the parent untick some. All ticked by
+// default. Topics with no approved object show no panel — behaviour unchanged.
+// Fail open end-to-end: a fetch failure means no panel and no filtering.
+// ════════════════════════════════════════════════════
+let APPROVED_SUBS = null; // topic → [sub-strand names], for the current subject+year
+
+async function loadApprovedSubStrands() {
+  APPROVED_SUBS = null;
+  try {
+    const rows = await supabase.from('curriculum_objects').select(
+      'topic,version,payload',
+      `status=eq.approved&subject=eq.${encodeURIComponent(S.subject)}&year_group=eq.${S.year}&order=version.desc`,
+      session.token
+    );
+    const map = {};
+    (rows || []).forEach(r => {
+      if (map[r.topic]) return; // version.desc order — first row per topic is the live one
+      const subs = ((r.payload && r.payload.sub_strands) || []).map(s => s && s.name).filter(Boolean);
+      if (subs.length) map[r.topic] = subs;
+    });
+    APPROVED_SUBS = map;
+    logAgent('curriculum', `Approved curriculum loaded: ${Object.keys(map).length} topic(s) expandable into subtopics`, 'ok');
+  } catch (e) {
+    APPROVED_SUBS = {}; // fail open: no panel, generation uses the full approved list
+    logAgent('curriculum', `Approved curriculum unavailable (${e.message}) — subtopic fine-tuning disabled`, 'warn');
+  }
+  renderSubtopicPanel();
+}
+
+function renderSubtopicPanel() {
+  const panel = document.getElementById('subtopic-panel');
+  const cont = document.getElementById('subtopic-container');
+  if (!panel || !cont) return;
+  const withSubs = S.topics.filter(t => APPROVED_SUBS && APPROVED_SUBS[t] && APPROVED_SUBS[t].length);
+  Object.keys(S.subtopics).forEach(t => { if (!withSubs.includes(t)) delete S.subtopics[t]; });
+  if (!withSubs.length) { panel.classList.add('hidden'); cont.innerHTML = ''; return; }
+  // Default = ALL subtopics selected; an existing selection is preserved across re-renders.
+  withSubs.forEach(t => { if (!S.subtopics[t]) S.subtopics[t] = APPROVED_SUBS[t].slice(); });
+  cont.innerHTML = withSubs.map(t => {
+    const items = APPROVED_SUBS[t].map(name => {
+      const on = S.subtopics[t].includes(name);
+      return `<label class="subtopic-item"><input type="checkbox" data-topic="${escapeHtml(t)}" data-sub="${escapeHtml(name)}"${on ? ' checked' : ''}> ${escapeHtml(name)}</label>`;
+    }).join('');
+    return `<div class="subtopic-group"><div class="subtopic-group-title">${escapeHtml(t)}</div>${items}</div>`;
+  }).join('');
+  cont.onchange = onSubtopicToggle; // property assignment — never stacks duplicate listeners
+  panel.classList.remove('hidden');
+}
+
+function onSubtopicToggle(e) {
+  const cb = e.target;
+  if (!cb || cb.type !== 'checkbox') return;
+  const topic = cb.getAttribute('data-topic'), name = cb.getAttribute('data-sub');
+  if (!topic || !name || !S.subtopics[topic]) return;
+  const i = S.subtopics[topic].indexOf(name);
+  if (cb.checked && i === -1) S.subtopics[topic].push(name);
+  if (!cb.checked && i > -1) S.subtopics[topic].splice(i, 1);
+  hideErr('s2-sub-err');
+  logAgent('curriculum', `Subtopic ${cb.checked ? 'selected' : 'deselected'}: ${topic} → ${name} (${S.subtopics[topic].length} ticked)`, '');
 }
 
 function updateCatHeader(catName) {
@@ -3516,7 +3600,7 @@ function updateSelCount() {
 }
 
 function wizNext(step) {
-  hideErr('s1-err'); hideErr('s2-err');
+  hideErr('s1-err'); hideErr('s2-err'); hideErr('s2-sub-err');
   if (step === 1) {
     if (!S.subject || !S.year) { showErr('s1-err'); return; }
     // CR-008: Validate child assignment from Step 1
@@ -3524,12 +3608,16 @@ function wizNext(step) {
     if (s1Sel && !s1Sel.classList.contains('hidden')) S.assignedChildId = s1Sel.value;
     if (!S.assignedChildId && S.children.length > 0) { showErr('s1-err'); return; }
     S.topics = [];
+    S.subtopics = {}; // CR-032
     renderTopicGrid();
+    loadApprovedSubStrands(); // CR-032: async — panel renders when the fetch lands
     updateWizardProgress(2);
     showWizStep(2);
     logAgent('curriculum', `Topic grid loaded for ${S.subject} Year ${S.year}: ${Object.values(getCurriculum(S.subject, S.year)).flat().length} topics`);
   } else if (step === 2) {
     if (S.topics.length === 0) { showErr('s2-err'); return; }
+    // CR-032: every expandable topic must keep at least one subtopic ticked.
+    if (S.topics.some(t => Array.isArray(S.subtopics[t]) && S.subtopics[t].length === 0)) { showErr('s2-sub-err'); return; }
     S.questionCount = parseInt(document.getElementById('q-count-range').value);
     const selStep2 = document.getElementById('child-select');
     if (selStep2 && !selStep2.classList.contains('hidden')) {
@@ -3699,6 +3787,9 @@ async function callEdgeFunction() {
       subject:     S.subject,
       year:        S.year,
       topics:      S.topics,
+      // CR-032: parent's per-topic sub-strand selection (approved-curriculum topics only;
+      // null when nothing was expandable). Worker fails open if the field never arrives.
+      subtopics:   Object.keys(S.subtopics).length ? S.subtopics : null,
       difficulty:  S.difficulty,
       count:       S.questionCount,
       previousIds: getPreviousQuestionIds(),

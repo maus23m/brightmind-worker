@@ -2,7 +2,7 @@
 // Run: node curriculum.test.js
 // Covers validateProposalPayload / parseSweepResult / latestApprovedPerTopic /
 // buildCurriculumGuidance — synchronous, no network.
-const { validateProposalPayload, parseSweepResult, latestApprovedPerTopic, buildCurriculumGuidance, DEPTH_BANDS, normaliseDepth, approvedSubStrandIndex } = require("./curriculum");
+const { validateProposalPayload, parseSweepResult, latestApprovedPerTopic, buildCurriculumGuidance, DEPTH_BANDS, normaliseDepth, approvedSubStrandIndex, filterApprovedSubStrands } = require("./curriculum");
 
 let pass = 0, fail = 0;
 function check(name, cond) {
@@ -106,6 +106,56 @@ const goodPayload = {
   check("index: matches by id slug", m.match("expanding_single") === "Expanding a single bracket");
   check("index: off-list label → null (kept + warned by caller, not dropped)", m.match("Factorising") === null);
   check("index: ignores non-approved objects", approvedSubStrandIndex([{ topic: "X", status: "draft", payload: { sub_strands: [{ name: "Y" }] } }]).byTopic.size === 0);
+}
+
+// ── CR-032: filterApprovedSubStrands (parent-selected subtopics) ──
+{
+  const obj = {
+    topic: "Expressions & Equations", status: "approved", year_group: 7,
+    payload: {
+      sub_strands: [
+        { id: "notation", name: "Algebraic notation" },
+        { id: "substitution", name: "Substitution" },
+        { id: "simplifying", name: "Simplifying expressions" },
+      ],
+      misconceptions: [
+        { sub_strand: "simplifying", wrong: "5x + 3 = 8x" },
+        { sub_strand: "substitution", wrong: "2x means 2 + x" },
+        { wrong: "unattributed mistake" },
+      ],
+    },
+  };
+  const objs = [obj];
+
+  check("filter: no selection → unchanged", filterApprovedSubStrands(objs, null)[0] === obj);
+  check("filter: empty selection object → unchanged", filterApprovedSubStrands(objs, {})[0] === obj);
+  check("filter: topic not listed → unchanged", filterApprovedSubStrands(objs, { Other: ["Substitution"] })[0] === obj);
+  check("filter: empty array for topic → unchanged (fail open)",
+    filterApprovedSubStrands(objs, { "Expressions & Equations": [] })[0] === obj);
+
+  const narrowed = filterApprovedSubStrands(objs, { "Expressions & Equations": ["Substitution"] })[0];
+  check("filter: narrows to selected sub-strand", narrowed.payload.sub_strands.length === 1
+    && narrowed.payload.sub_strands[0].name === "Substitution");
+  check("filter: original object untouched (pure)", obj.payload.sub_strands.length === 3);
+  check("filter: misconception of a removed sub-strand dropped",
+    !narrowed.payload.misconceptions.some((m) => m.sub_strand === "simplifying"));
+  check("filter: misconception of a kept sub-strand kept",
+    narrowed.payload.misconceptions.some((m) => m.sub_strand === "substitution"));
+  check("filter: unattributed misconception kept",
+    narrowed.payload.misconceptions.some((m) => m.wrong === "unattributed mistake"));
+
+  const byId = filterApprovedSubStrands(objs, { "Expressions & Equations": ["simplifying"] })[0];
+  check("filter: matches by id slug too", byId.payload.sub_strands.length === 1
+    && byId.payload.sub_strands[0].id === "simplifying");
+  const caseIns = filterApprovedSubStrands(objs, { "Expressions & Equations": ["SUBSTITUTION", "algebraic notation"] })[0];
+  check("filter: case/punctuation-insensitive name match", caseIns.payload.sub_strands.length === 2);
+
+  check("filter: zero-match selection → unchanged (fail open, never blank)",
+    filterApprovedSubStrands(objs, { "Expressions & Equations": ["Nonexistent strand"] })[0] === obj);
+  check("filter: selecting everything → no-op (same object)",
+    filterApprovedSubStrands(objs, { "Expressions & Equations": ["Algebraic notation", "Substitution", "Simplifying expressions"] })[0] === obj);
+  check("filter: handles empty objects array", filterApprovedSubStrands([], { A: ["x"] }).length === 0);
+  check("filter: handles null objects array", filterApprovedSubStrands(null, { A: ["x"] }).length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
