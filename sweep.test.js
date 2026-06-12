@@ -64,6 +64,14 @@ const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "cu
 
   const existingSet = planTargets({ topics, requested: null, existing: new Set(["A"]), limit: null });
   check("plan: accepts a Set for existing", existingSet.toSweep.join(",") === "B,C,D");
+
+  // CR-031: --force re-sweeps existing topics — nothing is skipped.
+  const forced = planTargets({ topics, requested: null, existing: ["A", "C"], limit: null, force: true });
+  check("plan: force ignores existing (re-sweeps all)", forced.toSweep.join(",") === "A,B,C,D" && forced.skipped.length === 0);
+  const forcedNarrow = planTargets({ topics, requested: ["A"], existing: ["A"], limit: null, force: true });
+  check("plan: force still narrows to requested", forcedNarrow.toSweep.join(",") === "A");
+  const forcedCapped = planTargets({ topics, requested: null, existing: ["A", "B", "C", "D"], limit: 2, force: true });
+  check("plan: force respects limit", forcedCapped.toSweep.length === 2);
 }
 
 // ── DEF-050: the in-app Run sweep panel must exist in frontend/admin.html ──
@@ -79,6 +87,22 @@ const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "cu
   check("DEF-050: admin calls the run-sweep Edge Function", admin.includes("/functions/v1/run-sweep"));
   check("DEF-050: admin fetches the canonical taxonomy json", admin.includes("curriculum_taxonomy.json"));
   check("DEF-050: year selector covers Years 2-11", admin.includes("[2,3,4,5,6,7,8,9,10,11]"));
+
+  // CR-031: the Re-sweep existing option must exist and be sent to the Edge Function.
+  check("CR-031: admin has Re-sweep existing checkbox (sw-force)", admin.includes('id="sw-force"'));
+  check("CR-031: admin sends force in the run-sweep body", /JSON\.stringify\(\{ subject, topic, year, force \}\)/.test(admin));
+
+  // CR-031: the Edge Function source must accept force and supersede pending proposals
+  // (same DEF-048 sync-debt class — UI half and server half must move together).
+  const fn = fs.readFileSync(path.join(__dirname, "supabase", "functions", "run-sweep", "index.ts"), "utf-8");
+  check("CR-031: edge function reads force from the request body", /force = false\s*\}\s*=\s*await req\.json\(\)/.test(fn));
+  check("CR-031: edge function skip is bypassed when forced", /!force &&[\s\S]{0,80}skipped: true/.test(fn));
+  check("CR-031: edge function supersedes pending proposals on force", /superseded/.test(fn));
+
+  // CR-031: CLI exposes --force and supersedes pending before writing.
+  const cli = fs.readFileSync(path.join(__dirname, "scripts", "curriculum_sweep.js"), "utf-8");
+  check("CR-031: CLI parses a --force flag", /--force/.test(cli) && /args\.force = true/.test(cli));
+  check("CR-031: CLI supersedes pending proposals when forced", /supersedePending/.test(cli));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

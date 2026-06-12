@@ -11,8 +11,11 @@
 // BATCH (one subject + one year — sweeps every topic for that year):
 //   node scripts/curriculum_sweep.js --subject maths --year 7            # prints the plan only
 //   node scripts/curriculum_sweep.js --subject maths --year 7 --yes      # sweeps + writes
-//        [--topics "Circles,Sequences"]  [--limit 5]  [--scheme NC]
+//        [--topics "Circles,Sequences"]  [--limit 5]  [--scheme NC]  [--force]
 //   Already-pending / already-approved topics are skipped automatically (re-runs are cheap).
+//   --force (CR-031): re-sweep topics that already exist. An existing pending_review
+//   proposal is marked superseded and replaced; an approved object stays live until the
+//   fresh proposal is approved (the approve RPC versions + archives it then).
 //
 // Env: ANTHROPIC_API_KEY (required to sweep), SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
 //      (required to write / to skip-existing). CLAUDE_MODEL optional.
@@ -46,7 +49,8 @@ function topicsFor(taxonomy, subject, year) {
 
 // Decide what a batch run will sweep: narrow to `requested` (if given), drop `existing`,
 // cap at `limit`. `unknown` = requested topics not in the taxonomy (ignored, warned).
-function planTargets({ topics, requested, existing, limit }) {
+// CR-031: `force` disables the skip — existing topics are re-swept, nothing is skipped.
+function planTargets({ topics, requested, existing, limit, force }) {
   const all = topics.slice();
   let list = all;
   let unknown = [];
@@ -56,7 +60,7 @@ function planTargets({ topics, requested, existing, limit }) {
     const want = new Set(requested);
     list = all.filter((t) => want.has(t));
   }
-  const ex = new Set(existing || []);
+  const ex = new Set(force ? [] : existing || []);
   const skipped = list.filter((t) => ex.has(t));
   let toSweep = list.filter((t) => !ex.has(t));
   if (Number.isFinite(limit) && limit > 0) toSweep = toSweep.slice(0, limit);
@@ -71,6 +75,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--dry-run") args.dryRun = true;
     else if (a === "--yes") args.yes = true;
+    else if (a === "--force") args.force = true;
     else if (a === "--source") args.sources.push(argv[++i]);
     else if (a.startsWith("--")) args[a.slice(2)] = argv[++i];
   }
@@ -121,6 +126,21 @@ async function writeProposal(url, key, row) {
   });
   if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
   return res.json();
+}
+
+// CR-031 (re-runs): retire any pending_review proposal for this exact target before
+// writing a fresh one, so the review queue never holds two live proposals for the same
+// (subject, topic, year, scheme). Approved objects are NOT touched here — they stay live
+// until the fresh proposal is approved (approve RPC versions + archives the prior).
+async function supersedePending(url, key, { subject, topic, year, scheme }) {
+  const enc = encodeURIComponent;
+  const filter = `status=eq.pending_review&subject=eq.${enc(subject)}&year_group=eq.${year}&topic=eq.${enc(topic)}&scheme=eq.${enc(scheme)}`;
+  const res = await fetch(`${url}/rest/v1/curation_proposals?${filter}`, {
+    method: "PATCH",
+    headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "superseded" }),
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
 }
 
 // Topics that already have a pending_review proposal OR an approved object → skip set.
@@ -179,6 +199,7 @@ async function runSingle(args) {
   }
   const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) { console.error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set (use --dry-run to preview)"); process.exit(2); }
+  if (args.force) await supersedePending(url, key, { subject, topic, year, scheme });
   const [written] = await writeProposal(url, key, {
     subject, topic, year_group: Number(year), scheme, proposed_payload: payload, source_run, status: "pending_review",
   });
@@ -199,9 +220,9 @@ async function runBatch(args) {
   if (url && key) existing = await existingTargets(url, key, subject, year, scheme);
   else console.error("[sweep] no Supabase creds — skip-existing disabled (plan shows all topics).");
 
-  const { toSweep, skipped, unknown } = planTargets({ topics, requested, existing, limit });
+  const { toSweep, skipped, unknown } = planTargets({ topics, requested, existing, limit, force: args.force });
   if (unknown.length) console.error(`[sweep] WARNING: --topics not in taxonomy, ignored: ${unknown.join(", ")}`);
-  console.error(`[sweep] PLAN ${subject} Y${year} (${scheme}): ${toSweep.length} to sweep, ${skipped.length} skipped (already pending/approved)${limit ? `, limit ${limit}` : ""}`);
+  console.error(`[sweep] PLAN ${subject} Y${year} (${scheme}): ${toSweep.length} to sweep, ${skipped.length} skipped (already pending/approved)${limit ? `, limit ${limit}` : ""}${args.force ? " — FORCE: re-sweeping existing (pending proposals will be superseded)" : ""}`);
   console.error(`        sweep: ${toSweep.join(", ") || "(none)"}`);
   if (skipped.length) console.error(`        skip:  ${skipped.join(", ")}`);
 
@@ -219,6 +240,7 @@ async function runBatch(args) {
     try {
       console.error(`[sweep] (${i + 1}/${toSweep.length}) ${topic} …`);
       const { payload, source_run } = await sweepOne({ apiKey, subject, topic, year, scheme, sources });
+      if (args.force) await supersedePending(url, key, { subject, topic, year, scheme });
       await writeProposal(url, key, { subject, topic, year_group: Number(year), scheme, proposed_payload: payload, source_run, status: "pending_review" });
       console.error(`        ✓ ${payload.sub_strands.length} sub-strands, ${payload.misconceptions.length} misconceptions`);
       created++;
