@@ -280,13 +280,13 @@ Label the diagram with below information (and nothing more):
 6. Texts should be away from drawings (proportionally away but near)
 7. No overlaps between two objects unless its legit intersection"
 
-"Draw a single rectangular plant cell, large and centred. Inside it draw: a circular nucleus near the centre, a large oval vacuole taking up most of the space, small oval chloroplasts scattered around the edges, and a thick outer boundary for the cell wall with a thinner line just inside for the cell membrane.
+"Draw a single rectangular plant cell, large and centred. Inside it draw: a circular nucleus near the centre, a large oval vacuole that fills about 60% of the cell area, exactly 5 small oval chloroplasts scattered around the edges, and a thick outer boundary for the cell wall with a thinner line just inside for the cell membrane.
 Label the diagram with below information (and nothing more):
 1. Cell wall
 2. Cell membrane
 3. Nucleus
-4. Vacuole
-5. Chloroplasts
+4. Vacuole — '60% of cell area'
+5. Chloroplasts — '5 visible'
 6. Title
 7. Texts should be away from drawings (proportionally away but near)
 8. No overlaps between two objects unless its legit intersection"

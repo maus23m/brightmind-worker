@@ -18,6 +18,7 @@ function check(name, cond) {
 const read = (p) => fs.readFileSync(path.join(__dirname, "prompts", p), "utf-8");
 const gen = read("question_gen.txt");
 const draw = read("diagram_system.txt");
+const indexSrc = fs.readFileSync(path.join(__dirname, "index.js"), "utf-8");
 
 // ── 1. question_gen: geometry-line rule present ──
 {
@@ -136,6 +137,74 @@ const draw = read("diagram_system.txt");
     /provenance/i.test(sweep) && /year_flag/i.test(sweep));
   check("sweep: carries a complete worked-example payload (sub_strands JSON)",
     /"sub_strands"/.test(sweep) && /"misconceptions"/.test(sweep));
+}
+
+// ── 7. DEF-043: coordinate-grid answer-leak prevention ──
+// Guards that coordinate-identification questions cannot have coordinate values
+// in the label whitelist, only the letter name of the point.
+{
+  check("gen: COORDINATE GRID QUESTIONS special rule section present",
+    /COORDINATE GRID QUESTIONS.*SPECIAL RULE/s.test(gen));
+  check("gen: coordinate rule requires letter name ONLY",
+    /letter name ONLY/i.test(gen));
+  check("gen: coordinate GOOD example uses 'letter name only — no coordinates'",
+    /letter name only.*no coordinates/i.test(gen));
+  check("gen: coordinate BAD example shows coordinate leak ('B (3, -2)' label)",
+    /B \(3, -2\)/.test(gen));
+  check("draw: coordinate grid exception — letter name only, no coordinate values",
+    /coordinate.*letter name only/is.test(draw) || /letter.*name only.*coordinate/is.test(draw));
+}
+
+// ── 8. DEF-033: diagram-required questions dropped if generation fails ──
+// Guards that processDiagrams does not pass a question with a missing SVG through
+// to the bank (i.e. it drops rather than serves diagramless).
+{
+  check("index: processDiagrams logs DROPPED on diagram generation failure (DEF-033)",
+    /DROPPED question.*diagram required but generation failed/i.test(indexSrc));
+  check("index: processDiagrams only pushes questions when svg is truthy",
+    /if \(svg\)\s*\{[\s\S]{0,100}results\.push/.test(indexSrc));
+}
+
+// ── 9. DEF-044: zero-question pipeline marks job failed, not complete ──
+// Guards that a pipeline producing 0 surviving questions writes status:"failed"
+// rather than status:"complete" (which left the frontend polling forever).
+{
+  check("index: zero-question guard checks final.length === 0 (DEF-044)",
+    /final\.length === 0/.test(indexSrc));
+  check("index: zero-question path sets status to 'failed'",
+    /final\.length === 0[\s\S]{0,400}status.*failed/.test(indexSrc));
+}
+
+// ── 10. DEF-034: top-up questions routed through Stage 4 review ──
+// Guards that top-up output passes through review() before being banked,
+// not written directly from processDiagrams (the pre-fix behaviour).
+{
+  check("index: top-up calls review() after processDiagrams (DEF-034)",
+    /topupWithDiagrams[\s\S]{0,200}review\(apiKey, topupWithDiagrams/.test(indexSrc));
+  check("index: top-up filters audit/child failures before banking",
+    /topupPassed.*filter.*_auditFailed.*_childFailed/.test(indexSrc));
+}
+
+// ── 12. DEF-038: plant-cell diagram example is data-rich, not decorative ──
+// Guards that the plant-cell GOOD example carries specific measurable quantities
+// (chloroplast count + vacuole %) so a child can derive the answer from the diagram.
+{
+  check("gen: plant-cell example specifies a chloroplast count (DEF-038)",
+    /chloroplasts.*5 visible|5.*chloroplasts/i.test(gen));
+  check("gen: plant-cell example specifies a vacuole measurement (DEF-038)",
+    /Vacuole.*60%|60%.*vacuole/i.test(gen));
+}
+
+// ── 11. DEF-035: diagramPrompt threaded into the review payload ──
+// Guards that buildReviewQuestions carries diagramPrompt so the auditor can
+// check scenario/data consistency between the question and the diagram drawn.
+{
+  const reviewSrc = fs.readFileSync(path.join(__dirname, "review.js"), "utf-8");
+  const reviewTxt = fs.readFileSync(path.join(__dirname, "prompts", "review.txt"), "utf-8");
+  check("review.js: buildReviewQuestions includes diagramPrompt field (DEF-035)",
+    /diagramPrompt\s*:\s*q\.diagramPrompt/.test(reviewSrc));
+  check("review.txt: criterion 3 checks diagramPrompt for scenario/data mismatch",
+    /diagramPrompt.*same.*scenario|same.*data.*diagramPrompt/is.test(reviewTxt));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

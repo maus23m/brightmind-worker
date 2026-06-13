@@ -140,6 +140,44 @@ function approvedSubStrandIndex(objects) {
   return { byTopic };
 }
 
+// ── CR-032: parent-selected subtopics ──
+// The tutorial wizard expands each topic into its approved sub-strands and lets the
+// parent deselect some. `selection` is { "<topic>": ["<sub-strand name>", ...] } from the
+// generation job row. Returns a NEW objects array where each listed topic's payload keeps
+// only the selected sub-strands (matched by name OR id, slug-normalised) and the
+// misconceptions that belong to a kept sub-strand (misconceptions referencing no known
+// sub-strand are kept — they may still be useful guidance).
+// FAIL OPEN (steer-with-fallback, the CR-022 discipline): a missing/empty/invalid
+// selection, a topic not in the selection, or a selection matching ZERO approved
+// sub-strands leaves that object byte-for-byte unchanged — a bad filter must narrow
+// nothing rather than blank the curriculum.
+function filterApprovedSubStrands(objects, selection) {
+  if (!selection || typeof selection !== "object" || Array.isArray(selection)) return objects || [];
+  return (objects || []).map((o) => {
+    const sel = o && o.topic ? selection[o.topic] : null;
+    if (!Array.isArray(sel) || sel.length === 0) return o;
+    const subs = Array.isArray(o.payload?.sub_strands) ? o.payload.sub_strands : [];
+    const want = new Set(sel.map(slugify).filter(Boolean));
+    const kept = subs.filter((s) => s && (want.has(slugify(s.name)) || (s.id && want.has(slugify(s.id)))));
+    if (kept.length === 0 || kept.length === subs.length) return o; // zero-match → fail open; all kept → no-op
+    const keptKeys = new Set();
+    kept.forEach((s) => { keptKeys.add(slugify(s.name)); if (s.id) keptKeys.add(slugify(s.id)); });
+    const removedKeys = new Set();
+    subs.forEach((s) => {
+      if (kept.includes(s)) return;
+      removedKeys.add(slugify(s.name)); if (s.id) removedKeys.add(slugify(s.id));
+    });
+    const misc = Array.isArray(o.payload?.misconceptions) ? o.payload.misconceptions : [];
+    const keptMisc = misc.filter((m) => {
+      const k = slugify(m && m.sub_strand);
+      if (!k) return true;                 // unattributed → keep
+      if (keptKeys.has(k)) return true;    // belongs to a kept sub-strand
+      return !removedKeys.has(k);          // unknown reference → keep; removed → drop
+    });
+    return { ...o, payload: { ...o.payload, sub_strands: kept, misconceptions: keptMisc } };
+  });
+}
+
 module.exports = {
   validateProposalPayload,
   parseSweepResult,
@@ -148,4 +186,5 @@ module.exports = {
   DEPTH_BANDS,
   normaliseDepth,
   approvedSubStrandIndex,
+  filterApprovedSubStrands,
 };

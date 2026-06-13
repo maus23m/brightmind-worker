@@ -87,17 +87,28 @@ Deno.serve(async (req) => {
     if (!ANTHROPIC_API_KEY) return json(500, { error: "ANTHROPIC_API_KEY not configured on the function (set it as a Supabase secret)" });
 
     // ── Input ──
-    const { subject, topic, year, scheme = "NC" } = await req.json();
+    // CR-031: `force` re-sweeps an existing topic — the pending proposal (if any) is
+    // marked superseded and replaced; an approved object stays live until the fresh
+    // proposal is approved (the approve RPC versions + archives it then).
+    const { subject, topic, year, scheme = "NC", force = false } = await req.json();
     if (!subject || !topic || !year) return json(400, { error: "subject, topic and year are required" });
     const enc = encodeURIComponent;
     const base = `subject=eq.${enc(subject)}&year_group=eq.${year}&topic=eq.${enc(topic)}`;
 
-    // ── Skip if already proposed/approved ──
+    // ── Skip if already proposed/approved (unless force) ──
     const [pending, approved] = await Promise.all([
       fetch(`${SUPABASE_URL}/rest/v1/curation_proposals?status=eq.pending_review&${base}&select=id`, { headers: svc() }).then((r) => r.json()).catch(() => []),
       fetch(`${SUPABASE_URL}/rest/v1/curriculum_objects?status=eq.approved&${base}&select=id`, { headers: svc() }).then((r) => r.json()).catch(() => []),
     ]);
-    if ((pending?.length || 0) + (approved?.length || 0) > 0) return json(200, { skipped: true, topic });
+    if (!force && (pending?.length || 0) + (approved?.length || 0) > 0) return json(200, { skipped: true, topic });
+    if (force && (pending?.length || 0) > 0) {
+      const sRes = await fetch(`${SUPABASE_URL}/rest/v1/curation_proposals?status=eq.pending_review&${base}`, {
+        method: "PATCH",
+        headers: { ...svc(), "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "superseded" }),
+      });
+      if (!sRes.ok) return json(500, { error: `could not supersede pending proposal (${sRes.status})` });
+    }
 
     // ── Distil ──
     const prompt = SWEEP_PROMPT

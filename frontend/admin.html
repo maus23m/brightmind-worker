@@ -104,11 +104,12 @@
     <div id="pane-curriculum" class="hidden">
       <div class="card">
         <h2>Run sweep</h2>
-        <p class="muted" style="margin-top:-8px">Generate maximum-recall proposals for review. Each topic is one Claude call (server-side); topics already pending or approved are skipped automatically.</p>
+        <p class="muted" style="margin-top:-8px">Generate maximum-recall proposals for review. Each topic is one Claude call (server-side); topics already pending or approved are skipped automatically. Tick "Re-sweep existing" to regenerate them — an existing pending proposal is replaced; an approved object stays live until you approve the fresh proposal.</p>
         <div class="sweep-form">
           <select id="sw-subject"><option value="maths">Maths</option><option value="science">Science</option></select>
           <select id="sw-year"></select>
           <select id="sw-topic"></select>
+          <label class="muted" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="sw-force"> Re-sweep existing</label>
           <button id="sw-run">Run sweep</button>
         </div>
         <div id="sw-progress"></div>
@@ -518,6 +519,8 @@ function initSweepForm() {
 }
 async function runSweep() {
   const subject = $('sw-subject').value, year = Number($('sw-year').value), pick = $('sw-topic').value;
+  // CR-031: force re-sweeps existing topics (server supersedes any pending proposal).
+  const force = $('sw-force').checked;
   let topics;
   try { topics = pick === '__all__' ? swTopicsFor(await loadTaxonomy(), subject, year) : [pick]; }
   catch (e) { showMsg($('global-msg'), 'err', e.message); return; }
@@ -534,7 +537,7 @@ async function runSweep() {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/run-sweep`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${session.token}` },
-        body: JSON.stringify({ subject, topic, year }),
+        body: JSON.stringify({ subject, topic, year, force }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { failed++; log(`<div class="msg err">${esc(topic)}: ${esc(data.error || ('HTTP ' + res.status))}</div>`); }
