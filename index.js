@@ -516,11 +516,12 @@ async function bankWrite(url, key, qs, subj, yr, topics, diff) {
     audit_score: q._auditRewritten ? 0.7 : 0.9, source: "claude", content_hash: qh(q.q),
   }));
   try {
-    await fetch(`${url}/rest/v1/question_bank`, {
+    const res = await fetch(`${url}/rest/v1/question_bank`, {
       method: "POST",
       headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=minimal" },
       body: JSON.stringify(rows),
     });
+    if (!res.ok) console.error(`Bank write error: HTTP ${res.status} — ${await res.text()}`);
   } catch (e) { console.error("Bank write error:", e); }
 }
 
