@@ -36,7 +36,7 @@ New CR from owner: the sweep skipped any topic already pending/approved with no 
 - **Admin app** (`frontend/admin.html`): "Re-sweep existing" checkbox (`sw-force`) wired into the run-sweep call.
 - **CLI** (`scripts/curriculum_sweep.js`): `--force` flag; `planTargets` force mode; `supersedePending()` before writes in single + batch modes.
 
-Tester: `sweep.test.js` 27 → 37. **DEPLOY PENDING:** the Edge Function redeploy was permission-blocked in-session — until redeployed, the checkbox is a safe no-op (live function ignores the unknown `force` field and keeps skipping).
+Tester: `sweep.test.js` 27 → 37. **DEPLOYED (13 Jun 2026):** `run-sweep` redeployed as version 2 to `rtyvomkhajyinlycgjzm`; force re-sweep is live.
 
 ### Step 6 (same session): CR-032 — Subtopic selection in the tutorial wizard
 
@@ -45,9 +45,9 @@ New CR from owner: expand each selected topic into its approved sub-strands in w
 - **Worker** (`index.js` + `curriculum.js`): new pure `filterApprovedSubStrands` narrows approved objects to the parent's selection (name/id slug match, misconception pruning, zero-match fail-open); applied before the coverage merge so the CR-022 gap driver honours it too. +15 curriculum tests.
 - **Migration** `0004_subtopic_selection.sql`: `generation_jobs.subtopics jsonb` + authenticated read of approved `curriculum_objects` (currently admin-only RLS).
 
-**TWO DEPLOY DEPENDENCIES (both safe no-ops until done):**
-1. Apply migration 0004 (MCP blocked in-session). Without it the panel never shows (RLS blocks the read).
-2. Update the `generate-questions` Edge Function (deployed-only, source NOT in repo — same DEF-048/DEF-050 class) to copy `subtopics` from the request body into its `generation_jobs` insert. One-line change; without it the worker never sees the field and fails open.
+**DEPLOYED (13 Jun 2026):**
+1. Migration 0004 applied to `rtyvomkhajyinlycgjzm` — `generation_jobs.subtopics jsonb` added, `curriculum_objects_read_approved` RLS policy live; the panel will now load for authenticated parents.
+2. `generate-questions` Edge Function updated (version 6): `subtopics` now destructured from request body and written to `generation_jobs`. Source committed to repo at `supabase/functions/generate-questions/index.ts` (was deployed-only — closes the DEF-048 sync debt for this function).
 
 ## Final state this session
 
@@ -59,9 +59,9 @@ New CR from owner: expand each selected topic into its approved sub-strands in w
 
 | Item | Status |
 |---|---|
-| CR-031 Edge Function redeploy (`run-sweep` to `rtyvomkhajyinlycgjzm`) | PENDING — Supabase MCP approval gate blocked all calls in-session; owner to deploy or approve the connection |
-| CR-032 migration 0004 apply + `generate-questions` Edge Function update (copy `subtopics` body field into the `generation_jobs` insert) | PENDING — same MCP block; function source not in repo |
-| CR-022 final close — run `scripts/depth_tag_check.js`, record agreement number | PENDING (operator action; in-session Supabase MCP reads also blocked) |
+| CR-031 Edge Function redeploy | ✅ DEPLOYED (13 Jun 2026) — `run-sweep` version 2 live |
+| CR-032 migration 0004 + `generate-questions` update | ✅ DEPLOYED (13 Jun 2026) — migration applied; `generate-questions` version 6 live; source now in repo |
+| CR-022 final close — run `scripts/depth_tag_check.js`, record agreement number | PENDING (operator action — requires `ANTHROPIC_API_KEY` + `SUPABASE_SERVICE_ROLE_KEY`) |
 
 ## Still open defects
 - DEF-036, DEF-040 (awaiting visual QA), DEF-047, DEF-048, DEF-049
