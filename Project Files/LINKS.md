@@ -31,8 +31,9 @@ configured — no setup needed). Confirmed working. The CLI sweep
 |---|---|---|
 | #15 | Admin backend Slice 1 — runtime_config dials (+ CLAUDE.md) | merged |
 | #16 | ADMIN-2 — Curriculum curation & approval | merged |
-| #17 | Curriculum sweep — per-subject+year batch mode | merged — but commits `b751b0b`/`0da3fbd` (in-app Run sweep) were pushed after the merge and stranded on the branch (DEF-050) |
+| #17 | Curriculum sweep — per-subject+year batch mode | merged |
 | #18 | CR-022 (cont.) — depth/width coverage + mastery model | merged |
+| #19 | Fix DEF-050: restore in-app Run sweep panel to main | merged |
+| #20 | DEF-033/034/035/044 + CR-031 (sweep re-runs) + CR-032 (wizard subtopic selection) | merged (13 Jun 2026) |
 
-Active branch (DEF-050 fix — restores the in-app Run sweep panel):
-https://github.com/maus23m/brightmind-worker/compare/main...claude/sleepy-rubin-dgffc0?expand=1
+No active branches — all work is on `main`.
