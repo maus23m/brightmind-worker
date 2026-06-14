@@ -23,6 +23,7 @@ Rules:
 - NO explanatory text, captions, or descriptions below the diagram. No sentences. Only labels on the diagram elements themselves (axis labels, part names, measurements). The diagram is for a TEST, not a lesson.
 - If content doesn't fit horizontally, stack elements vertically or use a 2-row layout. Never cram labels together. Readability over layout fidelity.
 - GEOMETRY: build every shape from its real parts and draw each part as its own element. A line's name tells you what it is — a radius is a straight segment from the centre to the edge; a quarter circle (sector) is TWO radii meeting at the centre at a right angle plus an arc joining their far ends — it is NEVER a single diagonal. When the instruction names a right angle, draw a small right-angle square where the two lines meet. Label each named line on the line itself.
+- ANGLES: an angle lives at a single VERTEX point. Mark every angle with a small arc CENTRED EXACTLY ON THAT VERTEX (radius ~40-55px) — the arc must touch both lines that bound the angle, never float away from the vertex. Draw each ray/line at its TRUE inclination: compute the ray endpoint from the actual degree with cos/sin so a 120° angle visibly looks obtuse and a 60° angle visibly looks acute. The drawn angle MUST match its label — a bigger number means a visibly wider opening. When two or more angles share a vertex (angles on a straight line, around a point, vertically opposite, in a triangle), give each its own arc in a distinct colour and a comparable small radius, so their relative sizes read true at a glance. Put each label on the angle's BISECTOR, just outside its arc — readable, never sitting on a ray or detached across the canvas. Label a KNOWN angle with its value (e.g. "130°"); label an UNKNOWN angle exactly as the instruction gives it (e.g. "x") — never compute or reveal the unknown's value.
 - GRID SQUARES: when the instruction says "fill exactly N squares" followed by an explicit list of "row R col C" positions, fill PRECISELY those squares and no others. Count the listed positions — that integer is your visual constraint. Do not interpret a shape name (L, T, cross) by eye; fill each individually named cell. Use a filled `<rect>` for each cell. Unfilled cells: white fill, thin stroke. Filled cells: the specified colour (default orange if not stated), same stroke width as grid lines.
 
 WORKED EXAMPLE — study the STRUCTURE, do not copy it verbatim; draw exactly what the instruction asks. This shows the correct way to build a Circles/geometry diagram (a quarter circle, radius 8 cm): two straight radii meeting at the centre at a right angle, an arc joining their far ends, a right-angle square at the centre, and one label per radius — NOT a diagonal line.
@@ -33,4 +34,17 @@ WORKED EXAMPLE — study the STRUCTURE, do not copy it verbatim; draw exactly wh
   <polyline points="234,470 234,436 200,436" fill="none" stroke="#1a5276" stroke-width="3"/>
   <text x="380" y="505" font-size="20" text-anchor="middle" fill="#b03a2e">8 cm</text>
   <text x="150" y="300" font-size="20" text-anchor="middle" fill="#b03a2e">8 cm</text>
+</svg>
+
+WORKED EXAMPLE — ANGLES ON A STRAIGHT LINE — study the STRUCTURE, do not copy it verbatim; draw exactly what the instruction asks. Two angles sit on a straight line at one vertex: a KNOWN 130° and an UNKNOWN x. Note: the ray is drawn at the TRUE 130° inclination (computed with cos/sin) so it leans back over the line and the 130° opening visibly looks obtuse; EACH angle has its own arc centred exactly on the vertex dot; the known arc is labelled "130°" on its bisector and the unknown arc is labelled "x" — its value is NEVER computed or shown.
+<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="600" fill="white"/>
+  <text x="400" y="55" font-size="26" text-anchor="middle" fill="#1a5276" font-weight="bold">Angles on a Straight Line</text>
+  <line x1="120" y1="360" x2="680" y2="360" stroke="#196f3d" stroke-width="3"/>
+  <line x1="400" y1="360" x2="252.2" y2="183.8" stroke="#d35400" stroke-width="3"/>
+  <path d="M 455 360 A 55 55 0 0 0 364.6 317.9" fill="none" stroke="#1a5276" stroke-width="3"/>
+  <path d="M 374.3 329.4 A 40 40 0 0 0 360 360" fill="none" stroke="#7d3c98" stroke-width="3"/>
+  <circle cx="400" cy="360" r="8" fill="#196f3d"/>
+  <text x="442" y="286" font-size="20" text-anchor="middle" fill="#1a5276">130°</text>
+  <text x="333" y="336" font-size="20" text-anchor="middle" fill="#7d3c98">x</text>
 </svg>

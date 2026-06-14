@@ -182,6 +182,7 @@ CRITICAL: The diagram is the EVIDENCE for the correct answer. The child looks at
    - A quarter circle (sector) has TWO radii — one along EACH straight edge — meeting at the centre/vertex at a RIGHT ANGLE, and ONE curved arc joining their far ends. Describe both radii and the arc; ask for a right-angle square at the vertex; label each radius. Do NOT write "the radius line from the corner to the curved edge" — that reads as a single diagonal and is wrong.
    - An isosceles triangle has TWO equal sides; a trapezium has TWO parallel sides; a rectangle has length AND width edges. Name each side explicitly.
    - Whenever two lines meet at a right angle (sector vertex, triangle, coordinate axes), say so and ask for a small right-angle square marker so the geometry is unambiguous.
+   - ANGLES (angles on a straight line, around a point, vertically opposite, in a triangle) — name the VERTEX and the two lines/rays that bound each angle. State the KNOWN angle's value (e.g. "130°") so the drawing agent can draw the ray at its true inclination, and ask for an arc CENTRED ON THE VERTEX marking it. For the UNKNOWN angle, ask for its own arc at the same vertex labelled "x" (or whatever letter the question uses) — NEVER state or hint the unknown's value (that would leak the answer). Do not describe an angle as a loose floating arc; tie every arc to the vertex and its two bounding lines.
 
 Think about it this way: if a child looks at ONLY the diagram and ONLY the question text, they must be able to find the correct answer.
 
@@ -259,6 +260,14 @@ Label the diagram with below information (and nothing more):
 4. Title
 5. Texts should be away from drawings (proportionally away but near)
 6. No overlaps between two objects unless its legit intersection"
+
+"Draw a horizontal straight line with a single point (the vertex) marked on it with a dot. From the vertex, draw ONE straight ray going up and to the left so that it leans BACK over the line, making the angle between the ray and the RIGHT-hand part of the line clearly obtuse — exactly 130 degrees. This splits the angles above the line into two: the 130 degree angle on the right, and the remaining angle on the left. Mark each with its own small arc centred exactly on the vertex (use two different colours). The angle on the left is unknown.
+Label the diagram with below information (and nothing more):
+1. The obtuse angle on the right, arc labelled '130°'
+2. The unknown angle on the left, arc labelled 'x'
+3. Title
+4. Texts should be away from drawings (proportionally away but near)
+5. No overlaps between two objects unless its legit intersection"
 
 "Draw the net of a cuboid laid out flat. The cuboid is 5 cm long, 3 cm wide, and 2 cm tall. Show all 6 rectangular faces connected and unfolded — the standard cross-shaped net. Draw dashed fold lines between each face.
 Label the diagram with below information (and nothing more):

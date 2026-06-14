@@ -207,5 +207,51 @@ const indexSrc = fs.readFileSync(path.join(__dirname, "index.js"), "utf-8");
     /diagramPrompt.*same.*scenario|same.*data.*diagramPrompt/is.test(reviewTxt));
 }
 
+// ── 13. DEF-052: angle diagrams — vertex-centred arcs, ray at true inclination ──
+// Guards the angle-diagram class fix: both prompts must carry an ANGLES rule and the
+// drawing prompt a worked angle SVG (arc centred on the vertex, ray drawn to match the
+// label), and the unknown angle must be shown as 'x' — never a computed value (leak).
+{
+  // generator rule + GOOD example
+  check("gen: rule #10 has an ANGLES clause (DEF-052)",
+    /ANGLES \(angles on a straight line/.test(gen));
+  check("gen: angle rule ties every arc to the vertex",
+    /arc CENTRED ON THE VERTEX/i.test(gen));
+  check("gen: angle rule forbids leaking the unknown's value",
+    /NEVER state or hint the unknown's value/i.test(gen));
+  check("gen: angles-on-a-straight-line GOOD example present",
+    /arc centred exactly on the vertex/i.test(gen) && /arc labelled '130°'/.test(gen));
+  check("gen: angle GOOD example labels the unknown 'x', not a number",
+    /arc labelled 'x'/.test(gen));
+
+  // drawing system prompt rule + worked SVG
+  check("draw: ANGLES rule present (DEF-052)",
+    /- ANGLES: an angle lives at a single VERTEX/.test(draw));
+  check("draw: angle rule requires arcs centred on the vertex",
+    /CENTRED EXACTLY ON THAT VERTEX/.test(draw));
+  check("draw: angle rule requires rays at their true inclination",
+    /TRUE inclination/.test(draw) && /cos\/sin/.test(draw));
+  check("draw: has a WORKED EXAMPLE for angles on a straight line",
+    /WORKED EXAMPLE — ANGLES ON A STRAIGHT LINE/.test(draw));
+
+  // the angle worked SVG must be an arc-based, vertex-centred construction
+  const angleEx = draw.split(/WORKED EXAMPLE — ANGLES ON A STRAIGHT LINE/)[1] || "";
+  const svgMatch = angleEx.match(/<svg[\s\S]*<\/svg>/i);
+  check("draw: angle worked example contains an SVG", !!svgMatch);
+  if (svgMatch) {
+    const svg = svgMatch[0];
+    check("draw: angle SVG marks angles with arc commands (A)",
+      (svg.match(/\bA \d/g) || []).length >= 2 && /<path[^>]*\bd=/.test(svg));
+    check("draw: angle SVG draws a vertex dot (circle)", /<circle/.test(svg));
+    check("draw: angle SVG uses the standard 800x600 viewBox",
+      /viewBox="0 0 800 600"/.test(svg));
+    check("draw: angle SVG labels the known angle 130°", /130°/.test(svg));
+    // unhappy-path / answer-leak guard: the unknown must stay 'x', the example must
+    // not reveal the computed complement (50° = 180 - 130).
+    check("draw: angle SVG shows the unknown as 'x' (no leak)",
+      />x<\/text>/.test(svg) && !/50°/.test(svg));
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
