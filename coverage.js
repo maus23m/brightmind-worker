@@ -27,9 +27,20 @@ const DEFAULT_WEAK_PCT = 0.6;
 // pre-CR-022 rows (no subStrand/depth). Returns:
 //   { cells: { [subStrand]: { [depth|"(unknown)"]: {attempts, correct} } },
 //     observedSubStrands: [...] }
-function buildCoverageMatrix(results) {
+//
+// DEF-053: optional `topics` filter. When a non-empty array is passed, only result rows
+// whose `topics` intersect it are aggregated — so the matrix (and `observedSubStrands`)
+// stay scoped to the requested topic instead of mixing a child's whole history. A result
+// row carries the tutorial's `topics`; rows without it are skipped when filtering. No
+// `topics` arg → every row counts (legacy behaviour, unchanged).
+function buildCoverageMatrix(results, topics) {
+  const topicFilter = Array.isArray(topics) && topics.length ? new Set(topics) : null;
   const cells = {};
   for (const r of results || []) {
+    if (topicFilter) {
+      const rt = Array.isArray(r && r.topics) ? r.topics : [];
+      if (!rt.some((t) => topicFilter.has(t))) continue;
+    }
     const answers = Array.isArray(r && r.answers) ? r.answers : [];
     for (const a of answers) {
       if (!a) continue;
@@ -126,6 +137,15 @@ function recommendation(matrix, curriculumObject, opts = {}) {
 // preserved, same contract as curriculum.js buildCurriculumGuidance).
 function buildCoverageTargetGuidance(matrix, curriculumObject, opts = {}) {
   if (!matrix || !Array.isArray(matrix.observedSubStrands)) return "";
+  // DEF-053: steering must be AUTHORITATIVE-ONLY. Without an approved curriculum object the
+  // grid denominator would fall back to the child's observed sub-strands (gridSubStrands) —
+  // which span every topic the child has practised, so a different topic's sub-strands leak
+  // into this topic's generation prompt and override it. Refuse to steer in that case (the
+  // prompt's own self-enumeration takes over). gridStatus/recommendation keep the observed
+  // fallback for the parent-facing coverage MAP — only generation steering is gated here.
+  const authoritative = Array.isArray(curriculumObject?.payload?.sub_strands) &&
+    curriculumObject.payload.sub_strands.some((s) => s && s.name);
+  if (!authoritative) return "";
   const g = gridStatus(matrix, curriculumObject, opts);
   const untested = g.cells.filter((c) => c.status === "untested");
   const weak = g.cells.filter((c) => c.status === "weak");
