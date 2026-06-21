@@ -191,7 +191,7 @@ async function getChildResults(url, key, childId, limit = 20) {
   if (!childId) return [];
   try {
     const rows = await supaFetch(url, key,
-      `results?child_id=eq.${childId}&order=completed_at.desc&limit=${limit}&select=answers`);
+      `results?child_id=eq.${childId}&order=completed_at.desc&limit=${limit}&select=topics,answers`);
     return Array.isArray(rows) ? rows : [];
   } catch (e) {
     console.error(`[Coverage] child results read failed (no steering): ${e.message}`);
@@ -617,16 +617,35 @@ functions.http("worker", async (req, res) => {
     if (childId) {
       try {
         const childResults = await getChildResults(url, key, childId);
-        const matrix = buildCoverageMatrix(childResults);
+        // DEF-053: scope the matrix to THIS job's topics so a child's history from other
+        // topics never enters the grid (no cross-topic sub-strand leak into generation).
+        const matrix = buildCoverageMatrix(childResults, topics);
         // Union of every requested topic's approved sub-strands = the grid denominator, so
         // never-seen sub-strands surface as untested width gaps (not just depth gaps within
-        // seen ones). Null when nothing approved → falls back to observed sub-strands.
+        // seen ones). Null when nothing approved.
         const mergedSubs = curriculum.flatMap((o) => (o.payload && o.payload.sub_strands) || []);
         const covObj = mergedSubs.length ? { payload: { sub_strands: mergedSubs } } : null;
-        const weakPct = await getConfig(url, key, "COVERAGE_WEAK_PCT", 0.6);
-        coverageTarget = buildCoverageTargetGuidance(matrix, covObj, { weakPct });
-        gapSubStrands = [...new Set(untestedCells(matrix, covObj, { weakPct }).map((c) => c.subStrand))];
-        if (coverageTarget) console.log(`[Job ${jobId}] Coverage driver: steering toward ${gapSubStrands.length} gap sub-strand(s) [${gapSubStrands.slice(0, 6).join(", ")}]`);
+        // DEF-053: steer generation ONLY from an authoritative (human-approved) sub-strand
+        // list. A self-enumerated topic (covObj === null) gets no coverage steering — the
+        // prompt's own sub-skill enumeration takes over. Without this gate the driver fell
+        // back to the child's cross-topic observed sub-strands and overrode the topic (e.g.
+        // an "Angles Introduction" job generated tally-chart questions).
+        if (covObj) {
+          const weakPct = await getConfig(url, key, "COVERAGE_WEAK_PCT", 0.6);
+          coverageTarget = buildCoverageTargetGuidance(matrix, covObj, { weakPct });
+          gapSubStrands = [...new Set(untestedCells(matrix, covObj, { weakPct }).map((c) => c.subStrand))];
+          // DEF-053 backstop: steering may reference ONLY sub-strands of the requested
+          // topic(s). Authoritative-by-construction today, but if a future change re-widens
+          // scope, drop the off-topic labels and log loudly rather than silently leak another
+          // topic into the prompt/bank read.
+          const allowedSubs = new Set(mergedSubs.map((s) => s && s.name).filter(Boolean));
+          const leaked = gapSubStrands.filter((s) => !allowedSubs.has(s));
+          if (leaked.length) {
+            console.error(`[Job ${jobId}] SCOPE LEAK — dropping off-topic coverage sub-strand(s): ${leaked.join(", ")}`);
+            gapSubStrands = gapSubStrands.filter((s) => allowedSubs.has(s));
+          }
+          if (coverageTarget) console.log(`[Job ${jobId}] Coverage driver: steering toward ${gapSubStrands.length} gap sub-strand(s) [${gapSubStrands.slice(0, 6).join(", ")}]`);
+        }
       } catch (e) { console.error(`[Job ${jobId}] Coverage matrix build failed (no steering): ${e.message}`); }
     }
 
