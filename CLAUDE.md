@@ -94,6 +94,23 @@ Descriptions of "good output" do not work reliably; a complete worked example do
 
 ---
 
+## Generation inputs
+
+**RULE: Every input that shapes a generation request must be scoped to the request's topic; fallbacks narrow scope, never widen it.**
+WHEN: Adding or changing anything fed into the question-generation prompt — curriculum
+steering, coverage targets (`{{coverage_target}}`), bank reads, exclusions, rejections.
+CHECK: Is each fragment filtered by the requested topic(s) at the point it is computed —
+not just by child, subject or year? When the authoritative source is empty, does the code
+fail to "no steering" rather than to another scope's data? (DEF-053: child-scoped coverage
+sub-strands leaked across topics — an "Angles Introduction" job generated tally-chart
+questions because the no-curriculum-object fallback used the child's observed sub-strands
+from every topic.) The topic line and any injected sub-strand block both answer "what to
+generate about" — they must agree: make one a subset of the other, or assert it. A soft
+"prioritise these" hint is a HARD instruction to the model; test the case where it conflicts
+with the topic.
+
+---
+
 ## Diagrams
 
 **RULE: Claude draws SVG directly — no intermediate engine or reviewer layer.**
