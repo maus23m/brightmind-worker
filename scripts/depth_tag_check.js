@@ -19,7 +19,23 @@ const { agreementStats } = require("../coverage");
 const { DEPTH_BANDS } = require("../curriculum");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
-const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
+// DEF-053: no hardcoded model id. Read from runtime_config (admin config page), the same
+// CLAUDE_MODEL key the worker reads; assigned in the entry point. This script already
+// requires Supabase creds, so the config read always has a service-role connection.
+let MODEL;
+
+// Source of truth is runtime_config; CLAUDE_MODEL env is an offline fallback; throws if
+// neither yields a model (never substitutes a buried, possibly-retired default).
+async function resolveModel(url, key) {
+  try {
+    const rows = await fetch(`${url}/rest/v1/runtime_config?key=eq.CLAUDE_MODEL&select=value`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }).then((r) => (r.ok ? r.json() : []));
+    const v = Array.isArray(rows) && rows[0] ? rows[0].value : null;
+    if (typeof v === "string" && v.trim()) return v.trim();
+  } catch (_) { /* fall through to env */ }
+  if (process.env.CLAUDE_MODEL) return process.env.CLAUDE_MODEL;
+  throw new Error("CLAUDE_MODEL not set in runtime_config (admin config page) and no CLAUDE_MODEL env fallback");
+}
 
 function arg(name, def) {
   const i = process.argv.indexOf(`--${name}`);
@@ -65,6 +81,7 @@ async function judgeDepth(apiKey, q) {
     console.error("Need ANTHROPIC_API_KEY + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY.");
     process.exit(1);
   }
+  MODEL = await resolveModel(url, key);
   const limit = Number(arg("limit", "40"));
   let filter = "depth=not.is.null&select=q,o,depth&order=created_at.desc&limit=" + limit;
   if (arg("subject")) filter += `&subject=eq.${encodeURIComponent(arg("subject"))}`;
