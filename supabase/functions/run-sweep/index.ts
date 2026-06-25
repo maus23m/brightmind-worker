@@ -9,13 +9,13 @@
 //
 // Env (Supabase injects SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY automatically):
 //   ANTHROPIC_API_KEY  — set as a function secret: `supabase secrets set ANTHROPIC_API_KEY=…`
-//   CLAUDE_MODEL       — optional override.
+// The model is NOT an env/secret here — it is read from runtime_config (the admin config
+// page), the same key the worker reads. See resolveModel + DEF-053.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-const MODEL = Deno.env.get("CLAUDE_MODEL") || "claude-sonnet-4-20250514";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -25,6 +25,25 @@ const CORS = {
 const svc = () => ({ apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` });
 const json = (status: number, obj: unknown) =>
   new Response(JSON.stringify(obj), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+
+// DEF-053: the sweep model is governed solely by runtime_config (the admin config page) —
+// the same CLAUDE_MODEL key the worker reads via getConfig. NO hardcoded model id lives
+// here: a stale/retired model literal is exactly what 404'd the sweep. Returns null when the
+// key is absent or unreadable so the caller fails closed and tells the admin to set it,
+// rather than silently substituting a buried default.
+async function resolveModel(): Promise<string | null> {
+  try {
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/runtime_config?key=eq.CLAUDE_MODEL&select=value`, { headers: svc() },
+    );
+    if (!r.ok) return null;
+    const rows = await r.json();
+    const v = Array.isArray(rows) && rows[0] ? rows[0].value : null;
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 const SWEEP_PROMPT = `You are a UK curriculum specialist distilling teacher-knowledge for ONE topic at ONE year group. Your output is a PROPOSAL a human will prune and approve — never shown to a child directly.
 
@@ -108,6 +127,13 @@ Deno.serve(async (req) => {
         body: JSON.stringify({ status: "superseded" }),
       });
       if (!sRes.ok) return json(500, { error: `could not supersede pending proposal (${sRes.status})` });
+    }
+
+    // ── Resolve the model from runtime_config (admin config page) — single source of
+    // truth. No hardcoded fallback: fail closed if it is unset (DEF-053).
+    const MODEL = await resolveModel();
+    if (!MODEL) {
+      return json(500, { error: "CLAUDE_MODEL not set in runtime_config — set it on the admin config page" });
     }
 
     // ── Distil ──

@@ -21,7 +21,10 @@ const { buildCurriculumGuidance, approvedSubStrandIndex, normaliseDepth, filterA
 const { buildCoverageMatrix, buildCoverageTargetGuidance, untestedCells } = require("./coverage");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
-const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
+// DEF-053: Sonnet 4 retired 15 Jun 2026 → now 404s. Default to its drop-in replacement
+// claude-sonnet-4-6. The live model still comes from runtime_config (getConfig); this is the
+// single env-overridable default the worker falls back to only when the table is unreachable.
+const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-6";
 // DEF-040: diagrams need a stronger model than text generation. Default to Opus 4.7.
 const DIAGRAM_MODEL = process.env.DIAGRAM_MODEL || "claude-opus-4-7";
 // Token caps are env-driven (DEF-037) so they can be tuned in the deploy env without a

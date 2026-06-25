@@ -103,7 +103,7 @@ create policy config_audit_select on public.config_audit
 -- so a re-run never clobbers a live admin edit. (These inserts fire the audit trigger,
 -- creating the initial config_audit provenance rows.)
 insert into public.runtime_config (key, value, value_type, description, updated_by) values
-  ('CLAUDE_MODEL',       '"claude-sonnet-4-20250514"'::jsonb, 'string', 'Text generation + review model (Stage 1/4).',                  'migration'),
+  ('CLAUDE_MODEL',       '"claude-sonnet-4-6"'::jsonb,        'string', 'Text generation + review model (Stage 1/4).',                  'migration'),
   ('DIAGRAM_MODEL',      '"claude-opus-4-7"'::jsonb,          'string', 'Diagram SVG model (Stage 3) — stronger model for diagrams.',   'migration'),
   ('MAX_TOKENS',         '8000'::jsonb,                       'number', 'Max output tokens for text generation calls.',                 'migration'),
   ('DIAGRAM_MAX_TOKENS', '16000'::jsonb,                      'number', 'Max output tokens for diagram generation calls.',              'migration')
