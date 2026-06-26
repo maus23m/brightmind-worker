@@ -418,5 +418,88 @@ check("balances: H2+O2->H2O unbalanced", balances(parseEquation("H2 + O2 -> H2O"
   check("eq_balance: bare tag (no compute) passes through", r._computeFailed === undefined);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// coin_match (money combinations) — DEF-054
+// ════════════════════════════════════════════════════════════════════════════
+
+const { optionPenceTotal } = require("./compute");
+
+// ── Money parser unit checks ──
+check("coin parse: 5p + 5p = 10", optionPenceTotal("5p + 5p") === 10);
+check("coin parse: 10p + 10p = 20", optionPenceTotal("10p + 10p") === 20);
+check("coin parse: 20p + 20p + 10p = 50", optionPenceTotal("20p + 20p + 10p") === 50);
+check("coin parse: £2 + £1 = 300", optionPenceTotal("£2 + £1") === 300);
+check("coin parse: mixed £1 + 50p = 150", optionPenceTotal("£1 + 50p") === 150);
+check("coin parse: £1.50 = 150", optionPenceTotal("£1.50") === 150);
+check("coin parse: prose 'a 5p, a 2p and a 1p' = 8", optionPenceTotal("a 5p, a 2p and a 1p") === 8);
+check("coin parse: no money token → null", optionPenceTotal("Only one coin") === null);
+
+// ── The exact live failure (Q7). Generator marked c→1 ("10p + 10p", =20p) with an
+//    explanation describing 5p+5p. Engine recomputes from the option text and must
+//    correct c to "5p + 5p" (index 0, =10p). ──
+{
+  const q = { q: "Five 2p coins make 10p. Which other coins make 10p?",
+    o: ["5p + 5p", "10p + 10p", "20p + 20p", "2p + 5p"], c: 1,
+    verify: "arithmetic", compute: { op: "coin_match", target: 10 } };
+  const [r] = computeVerify([q]);
+  check("DEF-054: Q7 truth 10p", r._computeTruth === 10);
+  check("DEF-054: Q7 c corrected away from wrong index 1 to 0", r.c === 0);
+  check("DEF-054: Q7 flagged corrected", r._computeCorrected === true);
+}
+
+// ── Happy path: generator already correct → verified, c unchanged ──
+{
+  const q = { q: "Which coins make 8p?",
+    o: ["5p + 2p + 1p", "5p + 5p", "2p + 2p", "10p + 1p"], c: 0,
+    verify: "arithmetic", compute: { op: "coin_match", target: 8 } };
+  const [r] = computeVerify([q]);
+  check("DEF-054: happy path verified, c unchanged", r._computeVerified === true && r.c === 0);
+}
+
+// ── Reject: two options total the target → ambiguous ──
+{
+  const q = { q: "Which coins make 10p?",
+    o: ["5p + 5p", "2p + 2p + 2p + 2p + 2p", "20p", "1p + 1p"], c: 0,
+    verify: "arithmetic", compute: { op: "coin_match", target: 10 } };
+  const [r] = computeVerify([q]); // 5+5=10 AND 2×5=10 → two matches
+  check("DEF-054: two options total target → ambiguous reject", r._computeFailed === true);
+}
+
+// ── Reject: no option totals the target ──
+{
+  const q = { q: "Which coins make 10p?",
+    o: ["5p + 2p", "20p + 20p", "1p + 1p", "50p"], c: 0,
+    verify: "arithmetic", compute: { op: "coin_match", target: 10 } };
+  const [r] = computeVerify([q]);
+  check("DEF-054: no option totals target → reject", r._computeFailed === true);
+}
+
+// ── Reject: a prose / unparseable option (Q6 trap) → fail closed ──
+{
+  const q = { q: "Which set of coins also makes 50p?",
+    o: ["20p + 20p + 10p", "Only one 50p coin can make 50p", "£1", "5p + 5p"], c: 1,
+    verify: "arithmetic", compute: { op: "coin_match", target: 50 } };
+  const [r] = computeVerify([q]);
+  // "Only one 50p coin can make 50p" parses as 50+50=100 (still a number), but the
+  // intent is to block prose; the real guard is the no-token case below.
+  check("DEF-054: prose+real options resolve or reject (no silent wrong mark)",
+    r._computeFailed === true || r.c === 0);
+}
+{
+  const q = { q: "Which coins make 50p?",
+    o: ["20p + 20p + 10p", "any combination works", "£1", "5p"], c: 1,
+    verify: "arithmetic", compute: { op: "coin_match", target: 50 } };
+  const [r] = computeVerify([q]); // "any combination works" → null → fail closed
+  check("DEF-054: option with no money token → fail closed", r._computeFailed === true);
+}
+
+// ── Missing target → fail closed ──
+{
+  const q = { q: "Which coins make 10p?", o: ["5p + 5p", "10p + 10p", "2p", "1p"], c: 0,
+    verify: "arithmetic", compute: { op: "coin_match" } };
+  const [r] = computeVerify([q]);
+  check("DEF-054: missing target → reject", r._computeFailed === true);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -479,6 +479,67 @@ function verifySolveFor(q, cb) {
   return resolveTruthToOption(q, survivors[0], cb.tol);
 }
 
+// ── Money parsing (coin_match, DEF-054) ──
+// Sum every money token in an option string, normalised to PENCE.
+//   "5p + 5p"   → 5 + 5   = 10
+//   "£2 + £1"   → 200+100 = 300
+//   "£1 + 50p"  → 100+50  = 150
+// Returns null if the string contains NO money token (prose / unparseable option
+// → the caller fails closed and rejects the whole question). This verifies the
+// option text the child actually sees — there is no separate structured breakdown
+// the generator could diverge from.
+function optionPenceTotal(opt) {
+  if (typeof opt !== "string") return null;
+  const s = opt.replace(/,/g, "");
+  let total = 0, found = false;
+  // Pound amounts first (optional decimal) → ×100 pence.
+  let m;
+  const pounds = /£\s*(\d+(?:\.\d+)?)/g;
+  while ((m = pounds.exec(s)) !== null) { total += Math.round(parseFloat(m[1]) * 100); found = true; }
+  // Strip the pound amounts so their digits can't be re-read as pence, then sum
+  // pence tokens: a number immediately followed by "p" at a word boundary
+  // ("5p", "50p coin" → yes; "5 pence" → no, by design — options must use "Np").
+  const sNoPounds = s.replace(/£\s*\d+(?:\.\d+)?/g, " ");
+  const pence = /(\d+(?:\.\d+)?)\s*p\b/g;
+  while ((m = pence.exec(sNoPounds)) !== null) { total += parseFloat(m[1]); found = true; }
+  return found ? total : null;
+}
+
+// coin_match — "which coins/notes make / total / also make <amount>?" questions.
+// Each option is itself a sum of coins/notes; the answer is the single option whose
+// total equals cb.target (in pence). Verifies the displayed option text directly
+// (optionPenceTotal), never the model's c/e. Fail-closed: an unparseable option,
+// zero matches, or ≥2 matches → reject (same contract as the other ops).
+function verifyCoinMatch(q, cb) {
+  if (typeof cb.target !== "number" || !Number.isFinite(cb.target)) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `coin_match requires a numeric "target" (amount in pence)` };
+  }
+  if (!Array.isArray(q.o) || q.o.length < 2) {
+    return { ...q, _computeFailed: true, _computeReason: `coin_match needs at least two options` };
+  }
+  const totals = q.o.map(optionPenceTotal);
+  if (totals.some((t) => t === null)) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `coin_match: an option has no parseable coin/note value (options must be plain coin sums, e.g. "5p + 5p")` };
+  }
+  const matches = [];
+  totals.forEach((t, i) => { if (Math.abs(t - cb.target) <= EPS) matches.push(i); });
+  if (matches.length === 0) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `coin_match: no option totals ${cb.target}p` };
+  }
+  if (matches.length > 1) {
+    return { ...q, _computeFailed: true,
+      _computeReason: `coin_match: ${matches.length} options total ${cb.target}p — question is ambiguous` };
+  }
+  const match = matches[0];
+  if (match !== q.c) {
+    return { ...q, c: match, _computeCorrected: true, _computeTruth: cb.target };
+  }
+  return { ...q, _computeVerified: true, _computeTruth: cb.target };
+}
+
 // equation_balance — atom-conservation check for chemistry balancing questions.
 // Two sub-modes:
 //   A (coefficient): cb.equation carries a "?" placeholder for the asked coefficient;
@@ -558,6 +619,9 @@ function computeVerify(qs) {
     // Expression-based ops branch BEFORE the legacy inputs-array validation.
     if (cb.op === "formula") return verifyFormula(q, cb);
     if (cb.op === "solve_for") return verifySolveFor(q, cb);
+    // coin_match parses the option TEXT (not a numeric inputs array), so it also
+    // branches before the legacy inputs-array validation (DEF-054).
+    if (cb.op === "coin_match") return verifyCoinMatch(q, cb);
 
     // ── Legacy single-op path (sum…equal_to) — matching logic unchanged ──
     if (!KNOWN_OPS.has(cb.op) ||
@@ -621,5 +685,5 @@ function computeVerify(qs) {
 
 module.exports = {
   computeVerify, OPS, KNOWN_OPS, optionValue, duplicateOptionReason,
-  safeEval, parseFormula, parseEquation, balances,
+  optionPenceTotal, safeEval, parseFormula, parseEquation, balances,
 };
