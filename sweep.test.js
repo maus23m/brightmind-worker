@@ -96,7 +96,8 @@ const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "cu
   // (same DEF-048 sync-debt class — UI half and server half must move together).
   const fn = fs.readFileSync(path.join(__dirname, "supabase", "functions", "run-sweep", "index.ts"), "utf-8");
   check("CR-031: edge function reads force from the request body", /force = false\s*\}\s*=\s*await req\.json\(\)/.test(fn));
-  check("CR-031: edge function skip is bypassed when forced", /!force &&[\s\S]{0,80}skipped: true/.test(fn));
+  // (window widened in CR-033: a logRun("skipped", …) call now sits inside the guard.)
+  check("CR-031: edge function skip is bypassed when forced", /!force &&[\s\S]{0,200}skipped: true/.test(fn));
   check("CR-031: edge function supersedes pending proposals on force", /superseded/.test(fn));
 
   // CR-031: CLI exposes --force and supersedes pending before writing.
