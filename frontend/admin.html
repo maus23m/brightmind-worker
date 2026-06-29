@@ -61,6 +61,16 @@
   .sweep-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #sw-progress { margin-top:12px; }
   #sw-progress .line { font-size:12px; color:var(--muted); padding:2px 0; }
+  /* coverage */
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0; }
+  .chip { font-size:12px; border-radius:7px; padding:4px 10px; border:1px solid var(--line); color:var(--muted); }
+  .chip b { color:var(--txt); }
+  .st { font-size:11px; border-radius:5px; padding:1px 8px; border:1px solid var(--line); white-space:nowrap; }
+  .st.approved     { color:var(--ok);     border-color:#4caf7855; background:#4caf7814; }
+  .st.pending_review { color:var(--accent); border-color:#4f9cff55; background:#4f9cff14; }
+  .st.error        { color:var(--danger); border-color:#ff6b6b55; background:#ff6b6b14; }
+  .st.not_swept    { color:var(--muted);  border-color:var(--line); }
+  .st.rejected, .st.superseded { color:#e8b339; border-color:#e8b33955; background:#e8b33914; }
 </style>
 </head>
 <body>
@@ -85,6 +95,7 @@
     <div class="tabs">
       <button class="tab active" id="tab-config" data-pane="config">Runtime config</button>
       <button class="tab" id="tab-curriculum" data-pane="curriculum">Curriculum</button>
+      <button class="tab" id="tab-coverage" data-pane="coverage">Coverage</button>
     </div>
     <div id="global-msg"></div>
 
@@ -124,6 +135,20 @@
       <div class="card">
         <h2>Approved objects (live)</h2>
         <div id="approved-list">Loading…</div>
+      </div>
+    </div>
+
+    <div id="pane-coverage" class="hidden">
+      <div class="card">
+        <h2>Sweep coverage</h2>
+        <p class="muted" style="margin-top:-8px">Every taxonomy topic for the chosen subject &amp; year, with where it stands: never swept, errored on the last attempt, awaiting review, or approved &amp; live. Pick a subject/year and Refresh; counts update at the top. Errors are captured from the moment a sweep is run — older runs predate the error log.</p>
+        <div class="sweep-form">
+          <select id="cv-subject"><option value="maths">Maths</option><option value="science">Science</option></select>
+          <select id="cv-year"></select>
+          <button id="cv-run">Refresh</button>
+        </div>
+        <div id="cv-summary"></div>
+        <div id="cv-table">Pick a subject and year, then Refresh.</div>
       </div>
     </div>
   </main>
@@ -171,22 +196,35 @@ const supabase = (() => {
     },
   };
 
+  // DEF-054: every authed request goes through here. When the caller passes an explicit
+  // `token` (sign-in / boot, before a session is stored) we use it as-is. Otherwise the
+  // request is "managed": we attach a token that authToken() has already kept fresh and —
+  // belt and braces — if it still 401s (token expired between the freshness check and the
+  // request) we force one refresh and retry exactly once.
+  async function authedReq(url, init, token) {
+    const withAuth = (tok) => ({ ...init, headers: { ...authHeaders(tok), ...(init.headers || {}) } });
+    if (token) return fetch(url, withAuth(token));
+    let res = await fetch(url, withAuth(await authToken()));
+    if (res.status === 401) res = await fetch(url, withAuth(await authToken(true)));
+    return res;
+  }
+
   const from = (table) => ({
     async select(cols = '*', filters = '', token = null) {
       let url = `${SUPABASE_URL}/rest/v1/${table}?select=${cols}`;
       if (filters) url += '&' + filters;
-      const res = await fetch(url, { headers: authHeaders(token) });
+      const res = await authedReq(url, { method: 'GET' }, token);
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || `HTTP ${res.status}`); }
       return res.json();
     },
     async update(data, filters = '', token = null) {
       let url = `${SUPABASE_URL}/rest/v1/${table}`;
       if (filters) url += '?' + filters;
-      const res = await fetch(url, {
+      const res = await authedReq(url, {
         method: 'PATCH',
-        headers: { ...authHeaders(token), 'Prefer': 'return=representation' },
+        headers: { 'Prefer': 'return=representation' },
         body: JSON.stringify(data),
-      });
+      }, token);
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || 'Update failed'); }
       return res.json();
     },
@@ -194,11 +232,10 @@ const supabase = (() => {
 
   // Call a Postgres function (RPC) — used for the atomic approve_curation_proposal.
   async function rpc(fn, params, token = null) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    const res = await authedReq(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
       method: 'POST',
-      headers: authHeaders(token),
       body: JSON.stringify(params),
-    });
+    }, token);
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || `RPC ${res.status}`); }
     return res.json();
   }
@@ -218,6 +255,38 @@ const session = {
   },
   clear() { ['bm_admin_token', 'bm_admin_refresh', 'bm_admin_email'].forEach((k) => localStorage.removeItem(k)); },
 };
+
+// ── Token freshness (DEF-054) ──
+// The Supabase access token is a ~1-hour JWT. A whole-curriculum sweep + review runs past
+// that, so the token used to expire mid-session and the next Approve/Save failed with
+// "JWT expired". authToken() is now the single source of a usable token: it refreshes
+// proactively when the token is within `skew` of expiry (or already gone) and is awaited
+// by every managed request. tokenNeedsRefresh is mirrored verbatim from
+// scripts/sweep_coverage.js (the canonical, unit-tested copy — admin.test.js).
+function decodeJwtExp(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return typeof payload.exp === 'number' ? payload.exp : null;
+  } catch (e) { return null; }
+}
+function tokenNeedsRefresh(exp, nowSec, skewSec = 60) {
+  if (exp == null || !Number.isFinite(exp)) return true;
+  return exp - nowSec <= skewSec;
+}
+let _refreshing = null; // de-dupe concurrent refreshes (refresh tokens are single-use)
+async function authToken(force = false) {
+  const tok = session.token;
+  if (!tok) throw new Error('Not signed in');
+  if (!force && !tokenNeedsRefresh(decodeJwtExp(tok), Math.floor(Date.now() / 1000))) return tok;
+  if (!session.refresh) { session.clear(); showSignin('Session expired — sign in again.'); throw new Error('Session expired'); }
+  if (!_refreshing) {
+    _refreshing = supabase.auth.refreshToken(session.refresh)
+      .then((r) => { session.set(r.access_token, r.refresh_token, session.email); return r.access_token; })
+      .catch((e) => { session.clear(); showSignin('Session expired — sign in again.'); throw e; })
+      .finally(() => { _refreshing = null; });
+  }
+  return _refreshing;
+}
 
 // ── Helpers ──
 const $ = (id) => document.getElementById(id);
@@ -267,7 +336,7 @@ async function loadConfig() {
   const box = $('config-list');
   try {
     const rows = await supabase.from('runtime_config').select(
-      'key,value,value_type,description,updated_by,updated_at', 'order=key.asc', session.token);
+      'key,value,value_type,description,updated_by,updated_at', 'order=key.asc');
     if (!rows.length) { box.innerHTML = '<p class="muted">No config keys yet.</p>'; return; }
     box.innerHTML = rows.map((r) => `
       <div class="row" data-key="${esc(r.key)}" data-type="${esc(r.value_type)}">
@@ -297,7 +366,7 @@ async function saveConfig(ev) {
   try {
     await supabase.from('runtime_config').update(
       { value, updated_by: session.email, updated_at: new Date().toISOString() },
-      `key=eq.${encodeURIComponent(key)}`, session.token);
+      `key=eq.${encodeURIComponent(key)}`);
     showMsg($('global-msg'), 'ok', `Saved ${key}.`);
     await Promise.all([loadConfig(), loadAudit()]);
   } catch (e) {
@@ -311,7 +380,7 @@ async function loadAudit() {
   const box = $('audit-list');
   try {
     const rows = await supabase.from('config_audit').select(
-      'key,old_value,new_value,changed_by,changed_at', 'order=changed_at.desc&limit=50', session.token);
+      'key,old_value,new_value,changed_by,changed_at', 'order=changed_at.desc&limit=50');
     if (!rows.length) { box.innerHTML = '<p class="muted">No changes recorded yet.</p>'; return; }
     box.innerHTML = `<table><thead><tr><th>When</th><th>Key</th><th>Old → New</th><th>By</th></tr></thead><tbody>${
       rows.map((r) => `<tr>
@@ -327,15 +396,18 @@ async function loadAudit() {
 
 // ── Tabs ──
 let curriculumLoaded = false;
+let coverageInited = false;
 function switchPane(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.pane === name));
   $('pane-config').classList.toggle('hidden', name !== 'config');
   $('pane-curriculum').classList.toggle('hidden', name !== 'curriculum');
+  $('pane-coverage').classList.toggle('hidden', name !== 'coverage');
   if (name === 'curriculum' && !curriculumLoaded) {
     curriculumLoaded = true;
     initSweepForm();
     Promise.all([loadProposals(), loadApprovedObjects()]);
   }
+  if (name === 'coverage') initCoverage();
 }
 
 // ── Curriculum: proposals awaiting review ──
@@ -345,7 +417,7 @@ async function loadProposals() {
   try {
     const rows = await supabase.from('curation_proposals').select(
       'id,subject,topic,year_group,scheme,proposed_payload,created_at',
-      'status=eq.pending_review&order=created_at.desc', session.token);
+      'status=eq.pending_review&order=created_at.desc');
     if (!rows.length) { box.innerHTML = '<p class="muted">No proposals awaiting review. Run the sweep to generate one.</p>'; return; }
     rows.forEach((p) => { proposalsById[p.id] = p; });
     box.innerHTML = rows.map(renderProposal).join('');
@@ -438,7 +510,7 @@ async function approveProposal(ev) {
   showMsg($('global-msg'), 'ok', '');
   try {
     await supabase.rpc('approve_curation_proposal',
-      { proposal_id: id, edited_payload: payload, approver: session.email }, session.token);
+      { proposal_id: id, edited_payload: payload, approver: session.email });
     showMsg($('global-msg'), 'ok', `Approved ${proposalsById[id].topic} (${payload.sub_strands.length} sub-strands frozen).`);
     await Promise.all([loadProposals(), loadApprovedObjects(), loadAudit()]);
   } catch (e) {
@@ -451,7 +523,7 @@ async function rejectProposal(ev) {
   const id = ev.target.closest('.prop').dataset.id;
   ev.target.disabled = true;
   try {
-    await supabase.from('curation_proposals').update({ status: 'rejected' }, `id=eq.${id}`, session.token);
+    await supabase.from('curation_proposals').update({ status: 'rejected' }, `id=eq.${id}`);
     showMsg($('global-msg'), 'ok', 'Proposal rejected.');
     await loadProposals();
   } catch (e) {
@@ -466,7 +538,7 @@ async function loadApprovedObjects() {
   try {
     const rows = await supabase.from('curriculum_objects').select(
       'subject,topic,year_group,version,payload,approved_by,approved_at',
-      'status=eq.approved&order=subject.asc&order=topic.asc', session.token);
+      'status=eq.approved&order=subject.asc&order=topic.asc');
     if (!rows.length) { box.innerHTML = '<p class="muted">No approved objects yet.</p>'; return; }
     box.innerHTML = `<table><thead><tr><th>Subject</th><th>Topic</th><th>Year</th><th>v</th><th>Sub-strands</th><th>Approver</th><th>When</th></tr></thead><tbody>${
       rows.map((r) => `<tr>
@@ -536,7 +608,7 @@ async function runSweep() {
     try {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/run-sweep`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${session.token}` },
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${await authToken()}` },
         body: JSON.stringify({ subject, topic, year, force }),
       });
       const data = await res.json().catch(() => ({}));
@@ -548,6 +620,82 @@ async function runSweep() {
   log(`<div class="msg ok">Done: ${created} created, ${skipped} skipped, ${failed} failed.</div>`);
   btn.disabled = false;
   await loadProposals();
+}
+
+// ── Curriculum: Sweep coverage dashboard (CR-033) ──
+// For the chosen subject/year, show every taxonomy topic with where it stands.
+// deriveSweepStatus is mirrored VERBATIM from scripts/sweep_coverage.js (the canonical,
+// unit-tested copy — admin.test.js). Keep the two in sync.
+function deriveSweepStatus({ object = null, proposal = null, lastRun = null } = {}) {
+  if (object && object.status === 'approved') return 'approved';
+  if (proposal && proposal.status === 'pending_review') return 'pending_review';
+  if (proposal && proposal.status === 'rejected') return 'rejected';
+  if (proposal && proposal.status === 'superseded') return 'superseded';
+  if (lastRun && lastRun.outcome === 'error') return 'error';
+  return 'not_swept';
+}
+const CV_LABEL = { approved: 'Approved', pending_review: 'Pending review', rejected: 'Rejected', superseded: 'Superseded', error: 'Errored', not_swept: 'Not swept' };
+
+function initCoverage() {
+  if (!coverageInited) {
+    coverageInited = true;
+    $('cv-year').innerHTML = [2,3,4,5,6,7,8,9,10,11].map((y) => `<option value="${y}"${y===2?' selected':''}>Year ${y}</option>`).join('');
+    $('cv-run').addEventListener('click', loadCoverage);
+  }
+  loadCoverage();
+}
+
+async function loadCoverage() {
+  const subject = $('cv-subject').value, year = Number($('cv-year').value);
+  const table = $('cv-table'), summary = $('cv-summary');
+  table.innerHTML = 'Loading…'; summary.innerHTML = '';
+  let topics;
+  try { topics = swTopicsFor(await loadTaxonomy(), subject, year); }
+  catch (e) { table.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+  try {
+    const base = `subject=eq.${encodeURIComponent(subject)}&year_group=eq.${year}`;
+    // One scoped read per source; reduce to the latest-per-topic in JS (small N).
+    const [objects, proposals, runs] = await Promise.all([
+      supabase.from('curriculum_objects').select('topic,status', `${base}&status=eq.approved`),
+      supabase.from('curation_proposals').select('topic,status,created_at', `${base}&order=created_at.desc`),
+      supabase.from('sweep_runs').select('topic,outcome,detail,created_at', `${base}&order=created_at.desc`)
+        .catch(() => []), // table may not exist yet on an un-migrated DB — degrade gracefully
+    ]);
+    const objByTopic = {}, propByTopic = {}, runByTopic = {};
+    objects.forEach((r) => { objByTopic[r.topic] = r; });
+    proposals.forEach((r) => { if (!propByTopic[r.topic]) propByTopic[r.topic] = r; }); // first = newest
+    (runs || []).forEach((r) => { if (!runByTopic[r.topic]) runByTopic[r.topic] = r; });
+
+    const counts = { approved: 0, pending_review: 0, rejected: 0, superseded: 0, error: 0, not_swept: 0 };
+    const rows = topics.map((topic) => {
+      const lastRun = runByTopic[topic] || null;
+      const status = deriveSweepStatus({ object: objByTopic[topic], proposal: propByTopic[topic], lastRun });
+      counts[status]++;
+      const when = lastRun ? (lastRun.created_at || '').slice(0, 19).replace('T', ' ') : '—';
+      let detail = '—';
+      if (status === 'error' && lastRun) detail = lastRun.detail || 'error';
+      else if (lastRun && lastRun.detail) detail = lastRun.detail;
+      return `<tr>
+        <td>${esc(topic)}</td>
+        <td><span class="st ${status}">${esc(CV_LABEL[status])}</span></td>
+        <td>${esc(when)}</td>
+        <td class="val">${esc(detail)}</td>
+      </tr>`;
+    }).join('');
+
+    summary.innerHTML = `<div class="chips">
+      <span class="chip"><b>${topics.length}</b> topics</span>
+      <span class="chip"><b>${counts.approved}</b> approved</span>
+      <span class="chip"><b>${counts.pending_review}</b> pending</span>
+      <span class="chip"><b>${counts.error}</b> errored</span>
+      <span class="chip"><b>${counts.not_swept}</b> not swept</span>
+      ${counts.rejected ? `<span class="chip"><b>${counts.rejected}</b> rejected</span>` : ''}
+      ${counts.superseded ? `<span class="chip"><b>${counts.superseded}</b> superseded</span>` : ''}
+    </div>`;
+    table.innerHTML = `<table><thead><tr><th>Topic</th><th>Status</th><th>Last attempt</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    table.innerHTML = `<div class="msg err">Could not load coverage: ${esc(e.message)}</div>`;
+  }
 }
 
 // ── Sign-in flow ──

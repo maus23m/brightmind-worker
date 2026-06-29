@@ -103,14 +103,29 @@ Deno.serve(async (req) => {
     ).then((r) => r.json()).catch(() => []);
     if (!Array.isArray(admins) || admins.length === 0) return json(403, { error: "not an admin" });
 
-    if (!ANTHROPIC_API_KEY) return json(500, { error: "ANTHROPIC_API_KEY not configured on the function (set it as a Supabase secret)" });
-
     // ── Input ──
     // CR-031: `force` re-sweeps an existing topic — the pending proposal (if any) is
     // marked superseded and replaced; an approved object stays live until the fresh
     // proposal is approved (the approve RPC versions + archives it then).
     const { subject, topic, year, scheme = "NC", force = false } = await req.json();
     if (!subject || !topic || !year) return json(400, { error: "subject, topic and year are required" });
+
+    // CR-033: record every terminal outcome of this sweep in sweep_runs (service role,
+    // best-effort, never blocks the response) so the coverage dashboard can show
+    // created / skipped / errored per topic. Errors used to vanish into the HTTP
+    // response only — now they are reconstructable after the fact.
+    const runBy = user.email || user.id;
+    const logRun = (outcome: string, detail: string, model: string | null = null) =>
+      fetch(`${SUPABASE_URL}/rest/v1/sweep_runs`, {
+        method: "POST",
+        headers: { ...svc(), "Content-Type": "application/json" },
+        body: JSON.stringify({ subject, topic, year_group: Number(year), scheme, outcome, detail, model, run_by: runBy }),
+      }).catch(() => {});
+
+    if (!ANTHROPIC_API_KEY) {
+      await logRun("error", "ANTHROPIC_API_KEY not configured on the function");
+      return json(500, { error: "ANTHROPIC_API_KEY not configured on the function (set it as a Supabase secret)" });
+    }
     const enc = encodeURIComponent;
     const base = `subject=eq.${enc(subject)}&year_group=eq.${year}&topic=eq.${enc(topic)}`;
 
@@ -119,20 +134,27 @@ Deno.serve(async (req) => {
       fetch(`${SUPABASE_URL}/rest/v1/curation_proposals?status=eq.pending_review&${base}&select=id`, { headers: svc() }).then((r) => r.json()).catch(() => []),
       fetch(`${SUPABASE_URL}/rest/v1/curriculum_objects?status=eq.approved&${base}&select=id`, { headers: svc() }).then((r) => r.json()).catch(() => []),
     ]);
-    if (!force && (pending?.length || 0) + (approved?.length || 0) > 0) return json(200, { skipped: true, topic });
+    if (!force && (pending?.length || 0) + (approved?.length || 0) > 0) {
+      await logRun("skipped", "already pending or approved");
+      return json(200, { skipped: true, topic });
+    }
     if (force && (pending?.length || 0) > 0) {
       const sRes = await fetch(`${SUPABASE_URL}/rest/v1/curation_proposals?status=eq.pending_review&${base}`, {
         method: "PATCH",
         headers: { ...svc(), "Content-Type": "application/json" },
         body: JSON.stringify({ status: "superseded" }),
       });
-      if (!sRes.ok) return json(500, { error: `could not supersede pending proposal (${sRes.status})` });
+      if (!sRes.ok) {
+        await logRun("error", `could not supersede pending proposal (${sRes.status})`);
+        return json(500, { error: `could not supersede pending proposal (${sRes.status})` });
+      }
     }
 
     // ── Resolve the model from runtime_config (admin config page) — single source of
     // truth. No hardcoded fallback: fail closed if it is unset (DEF-053).
     const MODEL = await resolveModel();
     if (!MODEL) {
+      await logRun("error", "CLAUDE_MODEL not set in runtime_config");
       return json(500, { error: "CLAUDE_MODEL not set in runtime_config — set it on the admin config page" });
     }
 
@@ -145,12 +167,19 @@ Deno.serve(async (req) => {
       headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model: MODEL, max_tokens: 8000, messages: [{ role: "user", content: prompt }] }),
     });
-    if (!cRes.ok) return json(502, { error: `Claude ${cRes.status}: ${(await cRes.text()).slice(0, 200)}` });
+    if (!cRes.ok) {
+      const detail = `Claude ${cRes.status}: ${(await cRes.text()).slice(0, 200)}`;
+      await logRun("error", detail, MODEL);
+      return json(502, { error: detail });
+    }
     const cData = await cRes.json();
     const raw = (cData.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     let payload;
     try { payload = validatePayload(JSON.parse(raw.replace(/```json|```/g, "").trim())); }
-    catch (e) { return json(502, { error: `bad sweep output: ${e.message}` }); }
+    catch (e) {
+      await logRun("error", `bad sweep output: ${(e as Error).message}`, MODEL);
+      return json(502, { error: `bad sweep output: ${(e as Error).message}` });
+    }
 
     // ── Write proposal ──
     const wRes = await fetch(`${SUPABASE_URL}/rest/v1/curation_proposals`, {
@@ -162,8 +191,12 @@ Deno.serve(async (req) => {
         status: "pending_review",
       }),
     });
-    if (!wRes.ok) return json(500, { error: `write failed ${wRes.status}` });
+    if (!wRes.ok) {
+      await logRun("error", `write failed ${wRes.status}`, MODEL);
+      return json(500, { error: `write failed ${wRes.status}` });
+    }
     const [row] = await wRes.json();
+    await logRun("created", `${payload.sub_strands.length} sub-strands`, MODEL);
     return json(200, { ok: true, topic, id: row?.id, sub_strands: payload.sub_strands.length, misconceptions: payload.misconceptions.length });
   } catch (e) {
     return json(500, { error: (e as Error).message });
