@@ -37,6 +37,42 @@ const curObj = {
   check("matrix: observedSubStrands lists both", m.observedSubStrands.length === 2);
 }
 
+// ── DEF-053: topic-scoped matrix (no cross-topic sub-strand leak) ──
+{
+  const results = [
+    { topics: ["Angles Introduction"], answers: [{ subStrand: "Acute vs obtuse", depth: "recall", selected: 1, correct: 1 }] },
+    { topics: ["Tally Charts"],        answers: [{ subStrand: "Reading tally marks", depth: "recall", selected: 1, correct: 1 }] },
+    { topics: ["Place Value", "Counting"], answers: [{ subStrand: "Comparing data in tally charts", depth: "application", selected: 0, correct: 1 }] },
+  ];
+  const scoped = buildCoverageMatrix(results, ["Angles Introduction"]);
+  check("def053: topic filter keeps only matching-topic rows", scoped.observedSubStrands.length === 1 && scoped.observedSubStrands[0] === "Acute vs obtuse");
+  check("def053: topic filter excludes other-topic sub-strands", !scoped.cells["Reading tally marks"] && !scoped.cells["Comparing data in tally charts"]);
+
+  const none = buildCoverageMatrix(results, ["3D Shapes"]);
+  check("def053: no matching topic → empty matrix", none.observedSubStrands.length === 0);
+
+  const legacy = buildCoverageMatrix(results); // no topics arg → aggregate all (unchanged)
+  check("def053: no topics arg aggregates every row (legacy)", legacy.observedSubStrands.length === 3);
+
+  // a row without a topics field is skipped when filtering, never crashes
+  const noTopicField = buildCoverageMatrix([{ answers: [{ subStrand: "X", depth: "recall", selected: 1, correct: 1 }] }], ["Angles Introduction"]);
+  check("def053: row missing topics is skipped under filter", noTopicField.observedSubStrands.length === 0);
+}
+
+// ── DEF-053: steering is authoritative-only (self-enumerated topic → no steer) ──
+{
+  // A matrix with real observed gaps but NO approved curriculum object must NOT steer —
+  // this is the exact leak: observed sub-strands from other topics would otherwise be
+  // injected as targets and override the requested topic.
+  const m = buildCoverageMatrix([{ topics: ["Tally Charts"], answers: [
+    { subStrand: "Reading tally marks", depth: "recall", selected: 1, correct: 1 },
+  ] }]);
+  check("def053: no curriculum object → no steering block", buildCoverageTargetGuidance(m, null) === "");
+  check("def053: empty-sub_strands object → no steering block", buildCoverageTargetGuidance(m, { payload: { sub_strands: [] } }) === "");
+  // With an authoritative object the block is still produced (steering preserved).
+  check("def053: authoritative object still steers", buildCoverageTargetGuidance(m, curObj).length > 0);
+}
+
 // ── untagged + unknown-depth handling (DEF-049 invariant) ──
 {
   const results = [{
