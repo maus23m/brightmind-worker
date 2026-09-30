@@ -19,7 +19,7 @@ files are stale (stop at 25 May) — repo `Project Files/` is the source of trut
   Advisor now shows no RLS errors. New `security.test.js` (in `npm test`): every table the code
   references must be RLS-enabled by a migration or on the verified pre-migration list.
 - **Backup table kept, not dropped:** `question_rejections_backup_20260614` = 23 parent rejections
-  (16 May–14 Jun, all maths Y2/Y7; 8 diagram-missing, 1 wrong-answer, 13 other/misc with notes).
+  (16 May–14 Jun, all maths Y2/Y7; 7 diagram-missing, 1 wrong-answer, 15 other/misc — most with notes).
   It is the ONLY copy (live `question_rejections` is empty). Useful input for the diagram
   regression pass and the golden set.
 - **DEF-055 (MINOR) — RESOLVED.** `index.js` fallbacks + `migrations/0001` seed → `claude-opus-5-5`
