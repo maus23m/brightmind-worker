@@ -138,7 +138,7 @@ const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "cu
   check("DEF-053: edge fn fails closed when CLAUDE_MODEL absent", /CLAUDE_MODEL not set in runtime_config/.test(fn));
 
   // The migration seed (the config-layer default for a fresh DB) is on a live id.
-  check("DEF-053: migration seeds a live CLAUDE_MODEL default", /'"claude-sonnet-4-6"'::jsonb/.test(mig));
+  check("DEF-053: migration seeds a live CLAUDE_MODEL default", /'"claude-opus-5-5"'::jsonb/.test(mig));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

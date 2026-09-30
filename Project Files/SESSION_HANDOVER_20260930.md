@@ -11,8 +11,21 @@ files are stale (stop at 25 May) — repo `Project Files/` is the source of trut
 - **First live check:** Year 7 "Nets of 3D shapes" diagram (open-top box 10×8×5) — correct
   proportions, no answer leak, answer 260 cm². Minor: "5 cm" label placement ambiguous (no
   dimension line) — harmless when the question text states the value.
-- **RLS live check (Supabase advisor, CRITICAL):** RLS still DISABLED on `question_bank`,
+- **RLS live check (Supabase advisor, CRITICAL):** RLS was DISABLED on `question_bank`,
   `child_question_history`, `question_rejections_backup_20260614`.
+- **DEF-054 (CRITICAL) — RESOLVED.** Migration `0006_rls_question_tables.sql` applied to
+  `rtyvomkhajyinlycgjzm`: RLS on all three, admin-only SELECT, no client write policy.
+  Verified live: anon sees 0 rows; service role still sees all (bank 73, history 541, backup 23).
+  Advisor now shows no RLS errors. New `security.test.js` (in `npm test`): every table the code
+  references must be RLS-enabled by a migration or on the verified pre-migration list.
+- **Backup table kept, not dropped:** `question_rejections_backup_20260614` = 23 parent rejections
+  (16 May–14 Jun, all maths Y2/Y7; 8 diagram-missing, 1 wrong-answer, 13 other/misc with notes).
+  It is the ONLY copy (live `question_rejections` is empty). Useful input for the diagram
+  regression pass and the golden set.
+- **DEF-055 (MINOR) — RESOLVED.** `index.js` fallbacks + `migrations/0001` seed → `claude-opus-5-5`
+  (both models). `config.test.js` now enforces code default == seed and no model literal
+  elsewhere. **Needs a Cloud Run redeploy to take effect** (fallback only — live config unaffected).
+- `npm test` green (8 suites).
 
 ## Next actions (in order)
 
@@ -21,10 +34,10 @@ files are stale (stop at 25 May) — repo `Project Files/` is the source of trut
    `CLAUDE_MODEL=claude-sonnet-5-5`, keep Opus for diagrams.
 2. **Diagram regression pass** on previously failing topics: angles on a straight line (DEF-052),
    circles/radii (DEF-045), coordinates (DEF-043). Close DEF-040 / DEF-052 on owner visual QA.
-3. **Remove stale hardcoded model defaults:** `index.js` `CONFIG_DEFAULTS` (`claude-sonnet-4-6`)
-   and `migrations/0001` seed. Confirm still-valid ids; update + Tester guard (same class as DEF-053).
-4. **RLS:** add policies, then enable RLS on `question_bank` + `child_question_history`; drop
-   `question_rejections_backup_20260614` if no longer needed. Log as a DEF entry.
+3. ~~Stale model defaults~~ — done (DEF-055). Redeploy the worker to pick up the new fallback.
+4. ~~RLS~~ — done (DEF-054). Remaining advisor WARNs (by design / owner): `is_admin()` and
+   `approve_curation_proposal()` are SECURITY DEFINER callable by clients (both gate on admin
+   internally); **enable Leaked Password Protection** in Supabase Auth settings (dashboard toggle).
 5. **CR-017:** legacy bank verify migration (bank was empty until DEF-051 fix on 14 Jun — small exposure).
 6. **ID clash:** PreLaunch Spec "CR-021 accuracy regression battery" collides with CR_LOG CR-021
    (diagram reviewer, reverted). Re-ID the battery.
