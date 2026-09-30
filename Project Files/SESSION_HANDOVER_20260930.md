@@ -25,7 +25,16 @@ files are stale (stop at 25 May) — repo `Project Files/` is the source of trut
 - **DEF-055 (MINOR) — RESOLVED.** `index.js` fallbacks + `migrations/0001` seed → `claude-opus-5-5`
   (both models). `config.test.js` now enforces code default == seed and no model literal
   elsewhere. **Needs a Cloud Run redeploy to take effect** (fallback only — live config unaffected).
-- `npm test` green (8 suites).
+- **DEF-056 (MAJOR) — RESOLVED.** Child year change didn't flow through: dashboard tiles and
+  topic badges showed last year's scores/tutorials (Spruha Y7→Y8, Rudhvi Y2→Y3; all 93 results
+  were prior-year). Migration `0007_results_year_group.sql` (applied live): `results.year_group`
+  added, backfilled from the tutorial, stamped on insert by trigger. Frontend `inYear()` now
+  scopes tile %/test count, topic badges, adaptive difficulty and the progress screen; worker
+  coverage matrix (`getChildResults`) reads only the job's year. Streaks/calendar/dedupe stay
+  cross-year by design. Tester: `yearscope.test.js`. **Needs frontend (Netlify) + worker
+  (Cloud Run) deploy.** Owner check after deploy: both tiles show "No maths tests yet" and the
+  topic grid shows no badges until Year 8 / Year 3 tutorials are done.
+- `npm test` green (9 suites).
 
 ## Next actions (in order)
 
