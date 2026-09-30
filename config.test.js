@@ -79,6 +79,41 @@ function fakeFetcher(rows) {
       typeof CONFIG_DEFAULTS.diagMaxTokens === "number");
   }
 
+  // ── 8. DEF-055: model fallbacks can't drift — code default == migration seed, one home ──
+  {
+    const fs = require("fs");
+    const path = require("path");
+    const idx = fs.readFileSync(path.join(__dirname, "index.js"), "utf-8");
+    const mig = fs.readFileSync(path.join(__dirname, "migrations", "0001_admin_runtime_config.sql"), "utf-8");
+    const codeDefault = (v) => (idx.match(new RegExp(`const ${v} = process\\.env\\.\\w+ \\|\\| "([^"]+)"`)) || [])[1];
+    const seed = (k) => (mig.match(new RegExp(`\\('${k}',\\s*'"([^"]+)"'::jsonb`)) || [])[1];
+
+    for (const [v, k] of [["MODEL", "CLAUDE_MODEL"], ["DIAGRAM_MODEL", "DIAGRAM_MODEL"]]) {
+      check(`DEF-055: ${v} code default found`, !!codeDefault(v));
+      check(`DEF-055: ${k} seed found`, !!seed(k));
+      check(`DEF-055: ${v} code default == ${k} migration seed`, codeDefault(v) === seed(k));
+    }
+
+    // Model-id literals live only in the index.js fallbacks and the 0001 seed (tests aside).
+    const MODEL_LITERAL = /claude-(opus|sonnet|haiku|fable|mythos)-[0-9]/;
+    const walk = (d, out = []) => {
+      for (const f of fs.readdirSync(d)) {
+        if (f === "node_modules" || f.startsWith(".") || f === "Project Files") continue;
+        const p = path.join(d, f);
+        if (fs.statSync(p).isDirectory()) walk(p, out); else out.push(p);
+      }
+      return out;
+    };
+    const ALLOWED = new Set(["index.js", path.join("migrations", "0001_admin_runtime_config.sql")]);
+    const offenders = walk(__dirname)
+      .filter((f) => /\.(js|ts|html|sql|txt|json)$/.test(f) && !/\.test\.js$/.test(f))
+      .map((f) => path.relative(__dirname, f))
+      .filter((f) => !ALLOWED.has(f) && MODEL_LITERAL.test(fs.readFileSync(path.join(__dirname, f), "utf-8")));
+    check(`DEF-055: no model literal outside index.js defaults + 0001 seed${offenders.length ? " — " + offenders.join(", ") : ""}`, offenders.length === 0);
+    check("DEF-055: index.js has exactly the two fallback literals",
+      (idx.match(new RegExp(MODEL_LITERAL.source, "g")) || []).length === 2);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
