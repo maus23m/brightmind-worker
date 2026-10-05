@@ -21,9 +21,13 @@ const { buildCurriculumGuidance, approvedSubStrandIndex, normaliseDepth, filterA
 const { buildCoverageMatrix, buildCoverageTargetGuidance, untestedCells } = require("./coverage");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
-const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
-// DEF-040: diagrams need a stronger model than text generation. Default to Opus 4.7.
-const DIAGRAM_MODEL = process.env.DIAGRAM_MODEL || "claude-opus-4-7";
+// DEF-053/DEF-055: the live models come from runtime_config (getConfig, admin config page).
+// These are the single env-overridable fallbacks used only when that table is unreachable.
+// They must equal the migrations/0001 seed (config.test.js enforces it) and should track the
+// live config, so a failed config read never silently drops to an older model.
+const MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
+// DEF-040: diagrams need a strong model; kept as its own dial so it can diverge from MODEL.
+const DIAGRAM_MODEL = process.env.DIAGRAM_MODEL || "claude-opus-5-5";
 // Token caps are env-driven (DEF-037) so they can be tuned in the deploy env without a
 // code change. Fallbacks equal the previous hardcoded values, so an unset var changes
 // nothing on deploy — set a var only to OVERRIDE its fallback.
@@ -187,11 +191,13 @@ async function getApprovedCurriculum(url, key, subject, yr, topics) {
 // Recent completed results (with their per-question answer records) for the coverage
 // matrix. The matrix is a projection over these rows — no separate matrix table. Errors
 // or no data → [] → no steering (fallback preserved). Service-role read.
-async function getChildResults(url, key, childId, limit = 20) {
-  if (!childId) return [];
+// DEF-056: scoped to the job's year group — last year's results must not mark this year's
+// sub-strands as covered. No year → [] (no steering) rather than an unscoped read.
+async function getChildResults(url, key, childId, yr, limit = 20) {
+  if (!childId || yr == null) return [];
   try {
     const rows = await supaFetch(url, key,
-      `results?child_id=eq.${childId}&order=completed_at.desc&limit=${limit}&select=topics,answers`);
+      `results?child_id=eq.${childId}&year_group=eq.${yr}&order=completed_at.desc&limit=${limit}&select=answers`);
     return Array.isArray(rows) ? rows : [];
   } catch (e) {
     console.error(`[Coverage] child results read failed (no steering): ${e.message}`);
@@ -616,10 +622,8 @@ functions.http("worker", async (req, res) => {
     let coverageTarget = "", gapSubStrands = [];
     if (childId) {
       try {
-        const childResults = await getChildResults(url, key, childId);
-        // DEF-053: scope the matrix to THIS job's topics so a child's history from other
-        // topics never enters the grid (no cross-topic sub-strand leak into generation).
-        const matrix = buildCoverageMatrix(childResults, topics);
+        const childResults = await getChildResults(url, key, childId, yr);
+        const matrix = buildCoverageMatrix(childResults);
         // Union of every requested topic's approved sub-strands = the grid denominator, so
         // never-seen sub-strands surface as untested width gaps (not just depth gaps within
         // seen ones). Null when nothing approved.
@@ -788,4 +792,4 @@ functions.http("worker", async (req, res) => {
 
 // Exposed for the Tester (config.test.js). Requiring this module still registers the
 // functions.http worker above, so the Cloud Run entry point is unaffected.
-module.exports = { getConfig, _parseConfigValue, CONFIG_DEFAULTS };
+module.exports = { getConfig, _parseConfigValue, CONFIG_DEFAULTS, getChildResults };

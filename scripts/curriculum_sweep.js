@@ -25,8 +25,27 @@ const path = require("path");
 const { parseSweepResult } = require("../curriculum");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
-const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
+// DEF-053: no hardcoded model id. The model is read from runtime_config (the admin config
+// page), the same CLAUDE_MODEL key the worker reads; resolveModel() assigns this in main().
+// The CLAUDE_MODEL env var is only an offline fallback (e.g. --dry-run without Supabase creds).
+let MODEL;
 const MAX_TOKENS = Number(process.env.MAX_TOKENS) || 8000;
+
+// Resolve the sweep model from runtime_config (source of truth). Falls back to the
+// CLAUDE_MODEL env var only when the table can't be read (offline / no creds), and throws
+// if neither yields a model — never substitutes a buried, possibly-retired default.
+async function resolveModel(url, key) {
+  if (url && key) {
+    try {
+      const rows = await fetch(`${url}/rest/v1/runtime_config?key=eq.CLAUDE_MODEL&select=value`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }).then((r) => (r.ok ? r.json() : []));
+      const v = Array.isArray(rows) && rows[0] ? rows[0].value : null;
+      if (typeof v === "string" && v.trim()) return v.trim();
+    } catch (_) { /* fall through to env */ }
+  }
+  if (process.env.CLAUDE_MODEL) return process.env.CLAUDE_MODEL;
+  throw new Error("CLAUDE_MODEL not set in runtime_config (admin config page) and no CLAUDE_MODEL env fallback");
+}
 const SOURCE_CHAR_CAP = 20000; // per source, keep the prompt bounded
 const BATCH_DELAY_MS = 1000;   // pause between batch calls
 
@@ -259,6 +278,7 @@ async function main() {
     console.error('Required: --subject <maths|science> --year <n>   (+ --topic "<chip>" for a single topic, else batch)');
     process.exit(2);
   }
+  MODEL = await resolveModel(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (args.topic) await runSingle(args);
   else await runBatch(args);
 }

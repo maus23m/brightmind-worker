@@ -96,13 +96,50 @@ const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "cu
   // (same DEF-048 sync-debt class — UI half and server half must move together).
   const fn = fs.readFileSync(path.join(__dirname, "supabase", "functions", "run-sweep", "index.ts"), "utf-8");
   check("CR-031: edge function reads force from the request body", /force = false\s*\}\s*=\s*await req\.json\(\)/.test(fn));
-  check("CR-031: edge function skip is bypassed when forced", /!force &&[\s\S]{0,80}skipped: true/.test(fn));
+  // (window widened in CR-033: a logRun("skipped", …) call now sits inside the guard.)
+  check("CR-031: edge function skip is bypassed when forced", /!force &&[\s\S]{0,200}skipped: true/.test(fn));
   check("CR-031: edge function supersedes pending proposals on force", /superseded/.test(fn));
 
   // CR-031: CLI exposes --force and supersedes pending before writing.
   const cli = fs.readFileSync(path.join(__dirname, "scripts", "curriculum_sweep.js"), "utf-8");
   check("CR-031: CLI parses a --force flag", /--force/.test(cli) && /args\.force = true/.test(cli));
   check("CR-031: CLI supersedes pending proposals when forced", /supersedePending/.test(cli));
+}
+
+// ── DEF-053: the sweep model lives only in runtime_config (admin config page) ──
+// Retired claude-sonnet-4-20250514 404'd the sweep. The fix removes every hardcoded model
+// id from the sweep paths and reads CLAUDE_MODEL from runtime_config instead. These guards
+// fail loudly if a literal model id creeps back in, or the config read is removed.
+{
+  const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf-8");
+  const fn = read("supabase", "functions", "run-sweep", "index.ts");
+  const cli = read("scripts", "curriculum_sweep.js");
+  const depth = read("scripts", "depth_tag_check.js");
+  const idx = read("index.js");
+  const mig = read("migrations", "0001_admin_runtime_config.sql");
+
+  // Repo guard: the retired model id is gone everywhere.
+  const RETIRED = "claude-sonnet-4-20250514";
+  for (const [name, src] of [["edge fn", fn], ["curriculum_sweep", cli], ["depth_tag_check", depth], ["index.js", idx], ["migration", mig]]) {
+    check(`DEF-053: ${name} has no retired model id`, !src.includes(RETIRED));
+  }
+
+  // Config-driven sweep paths carry NO hardcoded model family literal at all.
+  const MODEL_LITERAL = /claude-(opus|sonnet|haiku|fable)/;
+  check("DEF-053: edge fn has no hardcoded model literal", !MODEL_LITERAL.test(fn));
+  check("DEF-053: curriculum_sweep has no hardcoded model literal", !MODEL_LITERAL.test(cli));
+  check("DEF-053: depth_tag_check has no hardcoded model literal", !MODEL_LITERAL.test(depth));
+
+  // The sweep reads CLAUDE_MODEL from runtime_config (the admin config page).
+  check("DEF-053: edge fn reads runtime_config CLAUDE_MODEL", /runtime_config\?key=eq\.CLAUDE_MODEL/.test(fn) && /resolveModel/.test(fn));
+  check("DEF-053: curriculum_sweep reads runtime_config CLAUDE_MODEL", /runtime_config\?key=eq\.CLAUDE_MODEL/.test(cli) && /resolveModel/.test(cli));
+  check("DEF-053: depth_tag_check reads runtime_config CLAUDE_MODEL", /runtime_config\?key=eq\.CLAUDE_MODEL/.test(depth) && /resolveModel/.test(depth));
+
+  // Unhappy path: edge function fails closed (errors) when the key is unset — no silent default.
+  check("DEF-053: edge fn fails closed when CLAUDE_MODEL absent", /CLAUDE_MODEL not set in runtime_config/.test(fn));
+
+  // The migration seed (the config-layer default for a fresh DB) is on a live id.
+  check("DEF-053: migration seeds a live CLAUDE_MODEL default", /'"claude-opus-5-5"'::jsonb/.test(mig));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
