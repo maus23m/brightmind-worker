@@ -858,7 +858,7 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
 
     <div id="prog-no-data" class="hidden" style="text-align:center;padding:60px 20px;color:var(--muted);">
       <div style="font-size:48px;margin-bottom:16px;">📊</div>
-      <h3 style="font-size:18px;font-weight:800;color:var(--oxford);margin-bottom:8px;">No tests completed yet</h3>
+      <h3 id="prog-no-data-title" style="font-size:18px;font-weight:800;color:var(--oxford);margin-bottom:8px;">No tests completed yet</h3>
       <p style="font-size:14px;margin-bottom:20px;">Once your child completes a test, their progress will appear here.</p>
       <button class="btn btn-primary" onclick="goToWizard()">Set a Tutorial Now</button>
     </div>
@@ -2487,6 +2487,14 @@ async function handleSignOut() {
   logAgent('orchestrator', 'Signed out', '');
 }
 
+// DEF-056: year-dependent aggregates (scores, coverage, topic badges, adaptive difficulty)
+// count only work from the year they describe — a result/tutorial carries the year it was
+// set in (`year`), so a child's year change starts a clean slate without losing history.
+// Activity history (streaks, calendar, seen-question dedupe) is deliberately NOT scoped.
+function inYear(rec, year) {
+  return rec != null && year != null && rec.year != null && Number(rec.year) === Number(year);
+}
+
 // Load all parent data from Supabase into S cache
 async function loadParentData() {
   try {
@@ -2515,7 +2523,7 @@ async function loadParentData() {
     const childIds = S.children.map(c => c.id);
     if (childIds.length > 0) {
       const results = await supabase.from('results').select('*', `child_id=in.(${childIds.join(',')})&order=completed_at.desc`, token);
-      S.results = (results||[]).map(r => ({ ...r, childId:r.child_id, tutorialId:r.tutorial_id, completedAt:r.completed_at, timeTaken:r.time_taken }));
+      S.results = (results||[]).map(r => ({ ...r, childId:r.child_id, tutorialId:r.tutorial_id, completedAt:r.completed_at, timeTaken:r.time_taken, year:r.year_group }));
 
       const badges = await supabase.from('badges').select('*', `child_id=in.(${childIds.join(',')})`, token);
       S.badges = {};
@@ -2792,7 +2800,7 @@ function renderChildCards() {
     return;
   }
   container.innerHTML = children.map(c => {
-    const cRes   = S.results.filter(r => r.childId===c.id);
+    const cRes   = S.results.filter(r => r.childId===c.id && inYear(r, c.yearGroup)); // DEF-056
     const mRes   = cRes.filter(r => r.subject==='maths');
     const sRes   = cRes.filter(r => r.subject==='science');
     const mPct   = mRes.length ? Math.round(mRes.reduce((a,r)=>a+r.pct,0)/mRes.length*100) : null;
@@ -3067,7 +3075,7 @@ function computeAdaptiveDifficulty(childId, topics) {
   const allResults = S.results || [];
   // Filter results for this child on these topics
   const relevant = allResults.filter(r =>
-    r.childId === childId &&
+    r.childId === childId && inYear(r, S.year) && // DEF-056
     (r.topics || []).some(t => topics.includes(t))
   );
 
@@ -3349,7 +3357,7 @@ function renderTopicGrid() {
   function topicProgress(topic) {
     if (!childId) return null;
     const tuts = (S.tutorials || []).filter(t =>
-      t.childId === childId && (t.topics || []).includes(topic));
+      t.childId === childId && inYear(t, S.year) && (t.topics || []).includes(topic)); // DEF-056
     if (tuts.length === 0) return null;
     const done = tuts.filter(t => completedTutIds.has(String(t.id))).length;
     return { done, total: tuts.length };
@@ -5079,12 +5087,14 @@ function renderProgressScreen(childId) {
   document.getElementById('prog-child-sel').value = childId;
 
   const allResults = S.results;
-  const myResults  = allResults.filter(r => r.childId === childId);
+  const myResults  = allResults.filter(r => r.childId === childId && inYear(r, child.yearGroup)); // DEF-056
 
   if (myResults.length === 0) {
+    const ttl = document.getElementById('prog-no-data-title');
+    if (ttl) ttl.textContent = `No Year ${child.yearGroup||'?'} tests completed yet`;
     document.getElementById('prog-no-data').classList.remove('hidden');
     document.getElementById('prog-content').classList.add('hidden');
-    logAgent('curriculum', `No results yet for ${child.name}`, 'warn');
+    logAgent('curriculum', `No Year ${child.yearGroup} results yet for ${child.name}`, 'warn');
     return;
   }
 
@@ -5568,7 +5578,7 @@ async function loadChildData() {
     S.results = S.results.filter(r => r.childId !== S.childId);
     S.results = S.results.concat((resultRows||[]).map(r => ({
       ...r, childId:r.child_id, tutorialId:r.tutorial_id,
-      completedAt:r.completed_at, timeTaken:r.time_taken,
+      completedAt:r.completed_at, timeTaken:r.time_taken, year:r.year_group,
     })));
 
     logAgent('orchestrator', `Child data loaded: streak ${S.streaks[S.childId].count} · ${S.badges[S.childId].length} badge(s) · ${(resultRows||[]).length} result(s)`, 'ok');
