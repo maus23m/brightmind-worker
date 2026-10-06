@@ -1,6 +1,7 @@
 # Session Handover — 30 Sep 2026
 
-Resuming after ~3-month pause (last commit `df494f3`, 25 Jun 2026, DEF-053). Claude.ai project
+Resuming after ~3-month pause (last commit on `main` `df494f3`, 25 Jun 2026, DEF-053).
+*Correction (6 Oct): two later sessions existed on unmerged branches — 16 Jun (`SESSION_HANDOVER_20260616.md`) and 28 Jun (`_20260628.md`) — merged 5 Oct as PRs #25/#27. IDs DEF-054 (RLS) in this file is now **DEF-059**.* Claude.ai project
 files are stale (stop at 25 May) — repo `Project Files/` is the source of truth.
 
 ## Done this session

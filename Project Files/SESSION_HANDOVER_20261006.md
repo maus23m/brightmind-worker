@@ -19,8 +19,10 @@ Continues `SESSION_HANDOVER_20260930.md` (same Claude session). `main` now also 
 1. **Merge the DEF-057 PR**, then owner live check: Analytics → Spruha → Year 7 (last year) →
    "Which topics is my child struggling with most?" should answer with a topic chart; Year 8
    should say there are no completed tests yet.
-2. **Housekeeping found in the 5 Oct check (not yet done):** duplicate IDs DEF-053 ×2 and
-   DEF-054 ×2 (re-ID the later ones); duplicate migration prefix `0006_*` (rename
-   `0006_rls_question_tables.sql` → `0008_…`, repo-only); `admin.test.js` not in `npm test`.
+2. ~~Housekeeping~~ — done 6 Oct: duplicate IDs re-issued (coverage-leak DEF-053 → **DEF-058**,
+   RLS DEF-054 → **DEF-059**; the sweep-404 DEF-053 and admin-JWT DEF-054 keep their IDs —
+   chosen so no deployed Edge Function needed a comment-only redeploy); migration renamed
+   `0006_rls_question_tables.sql` → `0008_…` (repo-only, live name unchanged) + test that
+   migration prefixes are unique; `admin.test.js` added to `npm test`; 30 Sep handover corrected.
 3. Then the 30 Sep list: Cloud Run log check of model + job time; diagram regression pass;
    Leaked Password Protection toggle; CR-017; CR-021 battery re-ID; CR-018.

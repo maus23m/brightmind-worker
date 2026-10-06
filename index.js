@@ -629,7 +629,7 @@ functions.http("worker", async (req, res) => {
         // seen ones). Null when nothing approved.
         const mergedSubs = curriculum.flatMap((o) => (o.payload && o.payload.sub_strands) || []);
         const covObj = mergedSubs.length ? { payload: { sub_strands: mergedSubs } } : null;
-        // DEF-053: steer generation ONLY from an authoritative (human-approved) sub-strand
+        // DEF-058: steer generation ONLY from an authoritative (human-approved) sub-strand
         // list. A self-enumerated topic (covObj === null) gets no coverage steering — the
         // prompt's own sub-skill enumeration takes over. Without this gate the driver fell
         // back to the child's cross-topic observed sub-strands and overrode the topic (e.g.
@@ -638,7 +638,7 @@ functions.http("worker", async (req, res) => {
           const weakPct = await getConfig(url, key, "COVERAGE_WEAK_PCT", 0.6);
           coverageTarget = buildCoverageTargetGuidance(matrix, covObj, { weakPct });
           gapSubStrands = [...new Set(untestedCells(matrix, covObj, { weakPct }).map((c) => c.subStrand))];
-          // DEF-053 backstop: steering may reference ONLY sub-strands of the requested
+          // DEF-058 backstop: steering may reference ONLY sub-strands of the requested
           // topic(s). Authoritative-by-construction today, but if a future change re-widens
           // scope, drop the off-topic labels and log loudly rather than silently leak another
           // topic into the prompt/bank read.
