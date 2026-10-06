@@ -1280,7 +1280,11 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20p
       <div class="scope-fields">
         <div class="scope-field">
           <label>Child</label>
-          <select id="an-child-sel" onchange="analyticsOnScopeChange()"></select>
+          <select id="an-child-sel" onchange="analyticsOnChildChange()"></select>
+        </div>
+        <div class="scope-field">
+          <label>School year</label>
+          <select id="an-year-sel" onchange="analyticsOnYearChange()"></select>
         </div>
         <div class="scope-field">
           <label>Subject</label>
@@ -5708,6 +5712,7 @@ function runTesterM3(screen) {
       ['STRUCTURAL',  'Analytics screen exists',                    () => !!document.getElementById('screen-analytics')],
       ['STRUCTURAL',  'Child selector present',                      () => !!document.getElementById('an-child-sel')],
       ['STRUCTURAL',  'Subject selector present',                    () => !!document.getElementById('an-subject')],
+      ['BEHAVIOURAL', 'School-year selector defaults to current year (DEF-057)', () => { const sel = document.getElementById('an-year-sel'); const c = S.children.find(x => x.id === document.getElementById('an-child-sel')?.value); return !!sel && (!c || Number(sel.value) === Number(c.yearGroup)); }],
       ['STRUCTURAL',  'Date-from input present',                     () => !!document.getElementById('an-date-from')],
       ['STRUCTURAL',  'Date-to input present',                       () => !!document.getElementById('an-date-to')],
       ['STRUCTURAL',  'Start Analysis button present',               () => !!document.getElementById('an-start-btn')],
@@ -5797,6 +5802,7 @@ const AN = {
   childId: null,
   childName: '',
   subject: 'both',
+  yearGroup: null,
   dateFrom: '',
   dateTo: '',
   history: [],  // [{role,content}] for Claude conversation history
@@ -5820,11 +5826,8 @@ function goToAnalytics() {
   const sel = document.getElementById('an-child-sel');
   sel.innerHTML = children.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
-  // Default dates: last 30 days
-  const today = new Date();
-  const from  = new Date(today); from.setDate(from.getDate() - 30);
-  document.getElementById('an-date-to').value   = today.toISOString().split('T')[0];
-  document.getElementById('an-date-from').value = from.toISOString().split('T')[0];
+  // DEF-057: school year + dates default to the child's current year (see DEF-056).
+  populateAnalyticsYears();
 
   // Render starter questions
   renderStarterQuestions();
@@ -5868,6 +5871,42 @@ function analyticsUseStarter(text) {
   analyticsAsk();
 }
 
+// DEF-057: school years this child has results in, plus their current year (default).
+function analyticsYearsFor(childId) {
+  const child = S.children.find(c => c.id === childId);
+  const cur = child && child.yearGroup != null ? Number(child.yearGroup) : null;
+  const years = new Set((S.results || []).filter(r => r.childId === childId && r.year != null).map(r => Number(r.year)));
+  if (cur != null) years.add(cur);
+  return { cur, years: [...years].sort((a, b) => b - a) };
+}
+
+function populateAnalyticsYears() {
+  const childId = document.getElementById('an-child-sel').value;
+  const { cur, years } = analyticsYearsFor(childId);
+  document.getElementById('an-year-sel').innerHTML = years
+    .map(y => `<option value="${y}"${y === cur ? ' selected' : ''}>Year ${y}${y === cur ? ' (current)' : ''}</option>`).join('');
+  setAnalyticsDatesForYear();
+}
+
+// Dates span the selected year's results (first test → last test, or today for the
+// current year); a year with no results yet defaults to the last 30 days.
+function setAnalyticsDatesForYear() {
+  const childId = document.getElementById('an-child-sel').value;
+  const year = Number(document.getElementById('an-year-sel').value);
+  const { cur } = analyticsYearsFor(childId);
+  const dates = (S.results || []).filter(r => r.childId === childId && inYear(r, year))
+    .map(r => String(r.completedAt || '').slice(0, 10)).filter(Boolean).sort();
+  const today = new Date().toISOString().split('T')[0];
+  let from, to;
+  if (dates.length) { from = dates[0]; to = year === cur ? today : dates[dates.length - 1]; }
+  else { const f = new Date(); f.setDate(f.getDate() - 30); from = f.toISOString().split('T')[0]; to = today; }
+  document.getElementById('an-date-from').value = from;
+  document.getElementById('an-date-to').value = to;
+}
+
+function analyticsOnChildChange() { populateAnalyticsYears(); analyticsOnScopeChange(); }
+function analyticsOnYearChange()  { setAnalyticsDatesForYear(); analyticsOnScopeChange(); }
+
 function analyticsOnScopeChange() {
   // If session was active, warn that scope change resets
   if (AN.sessionActive) {
@@ -5883,9 +5922,10 @@ function analyticsStartSession() {
   const subject  = document.getElementById('an-subject').value;
   const dateFrom = document.getElementById('an-date-from').value;
   const dateTo   = document.getElementById('an-date-to').value;
+  const yearGroup = Number(document.getElementById('an-year-sel').value);
 
-  if (!childSel.value || !dateFrom || !dateTo) {
-    showToast('Please select a child and date range', 'warn'); return;
+  if (!childSel.value || !dateFrom || !dateTo || !yearGroup) {
+    showToast('Please select a child, school year and date range', 'warn'); return;
   }
   if (new Date(dateFrom) > new Date(dateTo)) {
     showToast('"From" date must be before "To" date', 'warn'); return;
@@ -5895,6 +5935,7 @@ function analyticsStartSession() {
   AN.childId    = childSel.value;
   AN.childName  = child ? child.name : 'your child';
   AN.subject    = subject;
+  AN.yearGroup  = yearGroup;
   AN.dateFrom   = dateFrom;
   AN.dateTo     = dateTo;
   AN.sessionActive = true;
@@ -5915,12 +5956,12 @@ function analyticsStartSession() {
   // Welcome message with all starter questions rendered as chips
   const subjectLabel = subject === 'both' ? 'Maths & Science' : subject.charAt(0).toUpperCase()+subject.slice(1);
   appendAssistantMessage(
-    `Session started for <strong>${AN.childName}</strong> — ${subjectLabel} — ${formatDate(dateFrom)} to ${formatDate(dateTo)}. What would you like to know?`,
+    `Session started for <strong>${escapeHtml(AN.childName)}</strong> — Year ${yearGroup} ${subjectLabel} — ${formatDate(dateFrom)} to ${formatDate(dateTo)}. What would you like to know?`,
     null,
     STARTER_QUESTIONS.map(q => q.text)
   );
 
-  logAgent('orchestrator', `Analytics session: child=${AN.childName} subject=${subject} range=${dateFrom}→${dateTo}`, 'ok');
+  logAgent('orchestrator', `Analytics session: child=${AN.childName} year=${yearGroup} subject=${subject} range=${dateFrom}→${dateTo}`, 'ok');
 
 }
 
@@ -5966,6 +6007,7 @@ async function analyticsAsk() {
   logAgent('designer', 'Pass 1: sending to analytics-agent Edge Function...', '');
 
   try {
+    await ensureFreshToken();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
 
@@ -5983,6 +6025,7 @@ async function analyticsAsk() {
           childId:   AN.childId,
           childName: AN.childName,
           subject:   AN.subject,
+          yearGroup: AN.yearGroup,
           dateFrom:  AN.dateFrom,
           dateTo:    AN.dateTo,
         },
