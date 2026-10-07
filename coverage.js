@@ -28,7 +28,7 @@ const DEFAULT_WEAK_PCT = 0.6;
 //   { cells: { [subStrand]: { [depth|"(unknown)"]: {attempts, correct} } },
 //     observedSubStrands: [...] }
 //
-// DEF-053: optional `topics` filter. When a non-empty array is passed, only result rows
+// DEF-058: optional `topics` filter. When a non-empty array is passed, only result rows
 // whose `topics` intersect it are aggregated — so the matrix (and `observedSubStrands`)
 // stay scoped to the requested topic instead of mixing a child's whole history. A result
 // row carries the tutorial's `topics`; rows without it are skipped when filtering. No
@@ -137,7 +137,7 @@ function recommendation(matrix, curriculumObject, opts = {}) {
 // preserved, same contract as curriculum.js buildCurriculumGuidance).
 function buildCoverageTargetGuidance(matrix, curriculumObject, opts = {}) {
   if (!matrix || !Array.isArray(matrix.observedSubStrands)) return "";
-  // DEF-053: steering must be AUTHORITATIVE-ONLY. Without an approved curriculum object the
+  // DEF-058: steering must be AUTHORITATIVE-ONLY. Without an approved curriculum object the
   // grid denominator would fall back to the child's observed sub-strands (gridSubStrands) —
   // which span every topic the child has practised, so a different topic's sub-strands leak
   // into this topic's generation prompt and override it. Refuse to steer in that case (the

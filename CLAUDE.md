@@ -101,7 +101,7 @@ WHEN: Adding or changing anything fed into the question-generation prompt — cu
 steering, coverage targets (`{{coverage_target}}`), bank reads, exclusions, rejections.
 CHECK: Is each fragment filtered by the requested topic(s) at the point it is computed —
 not just by child, subject or year? When the authoritative source is empty, does the code
-fail to "no steering" rather than to another scope's data? (DEF-053: child-scoped coverage
+fail to "no steering" rather than to another scope's data? (DEF-058: child-scoped coverage
 sub-strands leaked across topics — an "Angles Introduction" job generated tally-chart
 questions because the no-curriculum-object fallback used the child's observed sub-strands
 from every topic.) The topic line and any injected sub-strand block both answer "what to

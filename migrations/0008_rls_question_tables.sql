@@ -1,4 +1,7 @@
--- BrightMind — DEF-054: RLS was DISABLED on three public tables.
+-- BrightMind — DEF-059: RLS was DISABLED on three public tables.
+-- File renamed 6 Oct 2026 from 0006_rls_question_tables.sql (prefix clashed with
+-- 0006_sweep_runs.sql). Applied live on 30 Sep under the name "0006_rls_question_tables";
+-- the SQL is unchanged and idempotent, so re-running it is a no-op.
 -- question_bank, child_question_history and question_rejections_backup_20260614 pre-date
 -- migrations/, so nothing ever enabled RLS on them. With RLS off, the public anon key
 -- (shipped in the frontend) could read/insert/update/delete via PostgREST — the whole

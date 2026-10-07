@@ -37,7 +37,7 @@ const curObj = {
   check("matrix: observedSubStrands lists both", m.observedSubStrands.length === 2);
 }
 
-// ── DEF-053: topic-scoped matrix (no cross-topic sub-strand leak) ──
+// ── DEF-058: topic-scoped matrix (no cross-topic sub-strand leak) ──
 {
   const results = [
     { topics: ["Angles Introduction"], answers: [{ subStrand: "Acute vs obtuse", depth: "recall", selected: 1, correct: 1 }] },
@@ -59,7 +59,7 @@ const curObj = {
   check("def053: row missing topics is skipped under filter", noTopicField.observedSubStrands.length === 0);
 }
 
-// ── DEF-053: steering is authoritative-only (self-enumerated topic → no steer) ──
+// ── DEF-058: steering is authoritative-only (self-enumerated topic → no steer) ──
 {
   // A matrix with real observed gaps but NO approved curriculum object must NOT steer —
   // this is the exact leak: observed sub-strands from other topics would otherwise be
