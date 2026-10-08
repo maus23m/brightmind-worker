@@ -7,7 +7,7 @@
   },
   "scripts": {
     "start": "npx functions-framework --target=worker --port=8080",
-    "test": "node compute.test.js && node review.test.js && node prompts.test.js && node config.test.js && node curriculum.test.js && node sweep.test.js && node coverage.test.js && node admin.test.js && node security.test.js && node yearscope.test.js && node analytics.test.js && node --no-warnings --experimental-strip-types analytics.handler.test.mjs"
+    "test": "node compute.test.js && node review.test.js && node prompts.test.js && node config.test.js && node curriculum.test.js && node sweep.test.js && node coverage.test.js && node admin.test.js && node security.test.js && node yearscope.test.js && node analytics.test.js && node --no-warnings --experimental-strip-types analytics.handler.test.mjs && node --no-warnings --experimental-strip-types sweep.handler.test.mjs"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^3.4.0"

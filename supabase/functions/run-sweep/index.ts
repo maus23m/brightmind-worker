@@ -23,6 +23,10 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const svc = () => ({ apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` });
+// DEF-060: a maximum-recall taxonomy for a broad topic (e.g. Y8 "Charts & Graphs") ran past
+// the old 8000-token cap and was cut off mid-JSON. 16000 gives headroom; truncation is still
+// detected via stop_reason and reported as such, never as "bad JSON".
+const SWEEP_MAX_TOKENS = 16000;
 const json = (status: number, obj: unknown) =>
   new Response(JSON.stringify(obj), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
@@ -165,7 +169,7 @@ Deno.serve(async (req) => {
     const cRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODEL, max_tokens: 8000, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: SWEEP_MAX_TOKENS, messages: [{ role: "user", content: prompt }] }),
     });
     if (!cRes.ok) {
       const detail = `Claude ${cRes.status}: ${(await cRes.text()).slice(0, 200)}`;
@@ -173,6 +177,12 @@ Deno.serve(async (req) => {
       return json(502, { error: detail });
     }
     const cData = await cRes.json();
+    // DEF-060: a truncated response is not valid JSON — say so plainly instead of parsing it.
+    if (cData.stop_reason === "max_tokens") {
+      const detail = `sweep output truncated at ${SWEEP_MAX_TOKENS} tokens (topic too large for one call)`;
+      await logRun("error", detail, MODEL);
+      return json(502, { error: detail });
+    }
     const raw = (cData.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     let payload;
     try { payload = validatePayload(JSON.parse(raw.replace(/```json|```/g, "").trim())); }

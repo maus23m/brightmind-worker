@@ -29,7 +29,8 @@ const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messa
 // page), the same CLAUDE_MODEL key the worker reads; resolveModel() assigns this in main().
 // The CLAUDE_MODEL env var is only an offline fallback (e.g. --dry-run without Supabase creds).
 let MODEL;
-const MAX_TOKENS = Number(process.env.MAX_TOKENS) || 8000;
+// DEF-060: 8000 truncated broad topics mid-JSON; matches run-sweep SWEEP_MAX_TOKENS.
+const MAX_TOKENS = Number(process.env.MAX_TOKENS) || 16000;
 
 // Resolve the sweep model from runtime_config (source of truth). Falls back to the
 // CLAUDE_MODEL env var only when the table can't be read (offline / no creds), and throws
@@ -134,6 +135,8 @@ async function callClaude(apiKey, prompt) {
   });
   if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`);
   const d = await res.json();
+  // DEF-060: truncated output is not a parse problem — report the real cause.
+  if (d.stop_reason === "max_tokens") throw new Error(`sweep output truncated at ${MAX_TOKENS} tokens`);
   return d.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
 }
 
