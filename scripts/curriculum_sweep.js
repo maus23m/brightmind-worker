@@ -29,7 +29,7 @@ const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messa
 // page), the same CLAUDE_MODEL key the worker reads; resolveModel() assigns this in main().
 // The CLAUDE_MODEL env var is only an offline fallback (e.g. --dry-run without Supabase creds).
 let MODEL;
-// DEF-060: 8000 truncated broad topics mid-JSON; matches run-sweep SWEEP_MAX_TOKENS.
+// DEF-060: 8000 truncated broad topics mid-JSON; matches run-sweep DEFAULT_SWEEP_MAX_TOKENS.
 const MAX_TOKENS = Number(process.env.MAX_TOKENS) || 16000;
 
 // Resolve the sweep model from runtime_config (source of truth). Falls back to the

@@ -27,7 +27,7 @@ const PAYLOAD = JSON.stringify({
 let world, calls;
 const reset = () => {
   calls = [];
-  world = { claude: { stop_reason: "end_turn", content: [{ type: "text", text: PAYLOAD }] } };
+  world = { maxTokens: 20000, claude: { stop_reason: "end_turn", content: [{ type: "text", text: PAYLOAD }] } };
 };
 const res = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
 globalThis.fetch = async (url, opts = {}) => {
@@ -37,7 +37,8 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.includes("/rest/v1/admin_users?")) return res(200, [{ user_id: "admin-1" }]);
   if (u.includes("/rest/v1/curation_proposals?")) return res(200, []);
   if (u.includes("/rest/v1/curriculum_objects?")) return res(200, []);
-  if (u.includes("/rest/v1/runtime_config?")) return res(200, [{ value: "claude-test-model" }]);
+  if (u.includes("/rest/v1/runtime_config?key=eq.CLAUDE_MODEL")) return res(200, [{ value: "claude-test-model" }]);
+  if (u.includes("/rest/v1/runtime_config?key=eq.MAX_TOKENS")) return res(200, world.maxTokens == null ? [] : [{ value: world.maxTokens }]);
   if (u.endsWith("/rest/v1/curation_proposals")) return res(201, [{ id: "p1" }]);
   if (u.endsWith("/rest/v1/sweep_runs")) return res(201, {});
   if (u.startsWith("https://api.anthropic.com/")) return res(200, world.claude);
@@ -61,15 +62,22 @@ reset();
 let r = await sweep();
 check("happy: 200 + proposal created", r.status === 200 && r.body.ok && r.body.sub_strands === 1);
 const req = JSON.parse(calls.find((c) => c.url.startsWith("https://api.anthropic.com/")).opts.body);
-check("DEF-060: max_tokens raised above the old 8000 cap", req.max_tokens >= 16000);
+check("DEF-060: max_tokens comes from runtime_config MAX_TOKENS", req.max_tokens === 20000);
 check("happy: sweep_runs logs created", runLog().some((x) => x.outcome === "created"));
+
+// DEF-060: MAX_TOKENS absent → default 16000 (never the old 8000)
+reset();
+world.maxTokens = null;
+await sweep();
+check("DEF-060: MAX_TOKENS absent → 16000 default",
+  JSON.parse(calls.find((c) => c.url.startsWith("https://api.anthropic.com/")).opts.body).max_tokens === 16000);
 
 // DEF-060: truncated output (stop_reason max_tokens) is reported as truncation, not bad JSON
 reset();
 world.claude = { stop_reason: "max_tokens", content: [{ type: "text", text: PAYLOAD.slice(0, 60) }] };
 r = await sweep();
 check("DEF-060: truncated → 502", r.status === 502);
-check("DEF-060: error names truncation", /truncated/.test(r.body.error) && !/Unterminated|bad sweep output/.test(r.body.error));
+check("DEF-060: error names truncation + the dial", /truncated at 20000/.test(r.body.error) && /MAX_TOKENS/.test(r.body.error) && !/Unterminated|bad sweep output/.test(r.body.error));
 check("DEF-060: truncation logged to sweep_runs", runLog().some((x) => x.outcome === "error" && /truncated/.test(x.detail)));
 check("DEF-060: no proposal written on truncation", !calls.some((c) => c.url.endsWith("/rest/v1/curation_proposals")));
 
