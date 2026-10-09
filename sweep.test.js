@@ -142,5 +142,31 @@ const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "cu
   check("DEF-053: migration seeds a live CLAUDE_MODEL default", /'"claude-opus-5-5"'::jsonb/.test(mig));
 }
 
+// ── DEF-060 (class guard): every Claude call site detects truncated output ──
+// run-sweep cut off at max_tokens mid-JSON and reported "Unterminated string in JSON".
+// Any file that calls the Messages API must check stop_reason === "max_tokens" so a cut-off
+// response is reported as truncation, never parsed as if complete.
+{
+  const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf-8");
+  const callers = [
+    ["index.js"], ["scripts", "curriculum_sweep.js"],
+    ["supabase", "functions", "run-sweep", "index.ts"], ["supabase", "functions", "analytics-agent", "index.ts"],
+  ];
+  // depth_tag_check asks for one word with max_tokens 16 and substring-matches it — a cut-off
+  // reply is still matchable, so it is the one documented exemption.
+  const EXEMPT = ["scripts/depth_tag_check.js"];
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.name === "node_modules" || e.name.startsWith(".") ? [] : e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
+  const found = walk(__dirname).filter((f) => /\.(js|ts|mjs)$/.test(f) && !/\.test\./.test(f))
+    .filter((f) => /api\.anthropic\.com\/v1\/messages/.test(fs.readFileSync(f, "utf-8")))
+    .map((f) => path.relative(__dirname, f).split(path.sep).join("/")).sort();
+  const listed = callers.map((p) => p.join("/")).concat(EXEMPT).sort();
+  check("DEF-060: every Claude caller is listed (new callers must be added here)", found.join() === listed.join());
+  for (const p of callers) {
+    check(`DEF-060: ${p.join("/")} checks stop_reason max_tokens`, /stop_reason === "max_tokens"/.test(read(...p)));
+  }
+  check("DEF-060: CLI sweep cap raised above 8000", /\|\| 16000;/.test(read("scripts", "curriculum_sweep.js")));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

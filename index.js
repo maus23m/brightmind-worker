@@ -105,6 +105,9 @@ async function callClaude(apiKey, messages, maxTokens = MAX_TOKENS, system = nul
   });
   if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`);
   const d = await res.json();
+  // DEF-060: output cut off at max_tokens is incomplete JSON/SVG — throw a clear error
+  // (every caller already handles throws) instead of letting it fail later as a parse error.
+  if (d.stop_reason === "max_tokens") throw new Error(`Claude output truncated at max_tokens=${maxTokens} (model ${model})`);
   return d.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
 }
 

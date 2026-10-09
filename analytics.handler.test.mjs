@@ -110,6 +110,8 @@ reset(); world.claude.body = { stop_reason: "refusal", content: [] }; r = await 
 check("unhappy: refusal → 502", r.status === 502);
 reset(); world.claude.body = { stop_reason: "end_turn", content: [{ type: "text", text: "not json" }] }; r = await ask({ question: "q", scope });
 check("unhappy: malformed model output → 502", r.status === 502);
+reset(); world.claude.body = { stop_reason: "max_tokens", content: [{ type: "text", text: '{"narrative": "Propor' }] }; r = await ask({ question: "q", scope });
+check("DEF-060: truncated output → 502 incomplete (not 'malformed')", r.status === 502 && /incomplete/.test(r.body.error));
 reset(); globalThis.fetch = async () => { throw new Error("network down"); }; r = await ask({ question: "q", scope });
 check("unhappy: network failure → 401/500 JSON, no crash", [401, 500].includes(r.status) && r.body && r.body.error);
 r = await handler(new Request("https://fn/analytics-agent", { method: "OPTIONS" }));

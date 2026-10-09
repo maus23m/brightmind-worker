@@ -23,6 +23,11 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const svc = () => ({ apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` });
+// DEF-060: a maximum-recall taxonomy for a broad topic (e.g. Y8 "Charts & Graphs") ran past
+// a hardcoded 8000-token cap and was cut off mid-JSON. The cap is now the MAX_TOKENS dial on
+// the admin config page (runtime_config, same key the worker reads); this default applies only
+// when the key is absent. Truncation is detected via stop_reason and reported as such.
+const DEFAULT_SWEEP_MAX_TOKENS = 16000;
 const json = (status: number, obj: unknown) =>
   new Response(JSON.stringify(obj), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
@@ -42,6 +47,19 @@ async function resolveModel(): Promise<string | null> {
     return typeof v === "string" && v.trim() ? v.trim() : null;
   } catch (_) {
     return null;
+  }
+}
+
+// DEF-060: output cap from runtime_config MAX_TOKENS (admin config page); default if absent/invalid.
+async function resolveMaxTokens(): Promise<number> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/runtime_config?key=eq.MAX_TOKENS&select=value`, { headers: svc() });
+    if (!r.ok) return DEFAULT_SWEEP_MAX_TOKENS;
+    const rows = await r.json();
+    const v = Number(Array.isArray(rows) && rows[0] ? rows[0].value : NaN);
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : DEFAULT_SWEEP_MAX_TOKENS;
+  } catch (_) {
+    return DEFAULT_SWEEP_MAX_TOKENS;
   }
 }
 
@@ -159,13 +177,15 @@ Deno.serve(async (req) => {
     }
 
     // ── Distil ──
+    const maxTokens = await resolveMaxTokens();
+    const t0 = Date.now();
     const prompt = SWEEP_PROMPT
       .replaceAll("{{subject}}", subject).replaceAll("{{topic}}", topic)
       .replaceAll("{{year}}", String(year)).replaceAll("{{scheme}}", scheme);
     const cRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODEL, max_tokens: 8000, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
     });
     if (!cRes.ok) {
       const detail = `Claude ${cRes.status}: ${(await cRes.text()).slice(0, 200)}`;
@@ -173,6 +193,12 @@ Deno.serve(async (req) => {
       return json(502, { error: detail });
     }
     const cData = await cRes.json();
+    // DEF-060: a truncated response is not valid JSON — say so plainly instead of parsing it.
+    if (cData.stop_reason === "max_tokens") {
+      const detail = `sweep output truncated at ${maxTokens} tokens after ${Math.round((Date.now() - t0) / 1000)}s — raise MAX_TOKENS on the config page`;
+      await logRun("error", detail, MODEL);
+      return json(502, { error: detail });
+    }
     const raw = (cData.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     let payload;
     try { payload = validatePayload(JSON.parse(raw.replace(/```json|```/g, "").trim())); }
@@ -196,7 +222,7 @@ Deno.serve(async (req) => {
       return json(500, { error: `write failed ${wRes.status}` });
     }
     const [row] = await wRes.json();
-    await logRun("created", `${payload.sub_strands.length} sub-strands`, MODEL);
+    await logRun("created", `${payload.sub_strands.length} sub-strands (${cData.usage?.output_tokens ?? "?"}/${maxTokens} tokens, ${Math.round((Date.now() - t0) / 1000)}s)`, MODEL);
     return json(200, { ok: true, topic, id: row?.id, sub_strands: payload.sub_strands.length, misconceptions: payload.misconceptions.length });
   } catch (e) {
     return json(500, { error: (e as Error).message });

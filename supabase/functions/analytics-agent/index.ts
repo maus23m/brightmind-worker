@@ -113,6 +113,11 @@ Deno.serve(async (req) => {
     }
     const cData = await cRes.json();
     if (cData.stop_reason === "refusal") return json(502, { error: "The analysis could not be produced for that question. Please rephrase it." });
+    // DEF-060: a cut-off answer is incomplete JSON — log the real cause, not "malformed".
+    if (cData.stop_reason === "max_tokens") {
+      log(`output truncated at max_tokens=4000 model=${model}`);
+      return json(502, { error: "The analysis came back incomplete. Please try a narrower question." });
+    }
     const raw = (cData.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     let answer;
     try {
