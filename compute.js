@@ -525,6 +525,71 @@ function verifyEquationBalance(q) {
   return settle(match, count);
 }
 
+// ── Ratio ops (DEF-061) ──
+// Ratios arrive TYPED — compute.ratio is an array of numbers, one per part (2:3 → [2, 3]) —
+// so the model never writes "2:3" inside a numeric field (the malformed-JSON trigger).
+
+// Parse a ratio option ("2:3", "2 : 3", "1:2:5", "£2:£3") → [numbers] or null.
+function optionRatio(opt) {
+  if (typeof opt !== "string" || !opt.includes(":")) return null;
+  const parts = opt.split(":").map((p) => {
+    const m = p.replace(/,/g, "").match(/-?\d+\.?\d*/);
+    return m ? parseFloat(m[0]) : NaN;
+  });
+  return parts.length >= 2 && parts.every((n) => Number.isFinite(n)) ? parts : null;
+}
+
+const gcd2 = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) [a, b] = [b, a % b]; return a; };
+
+// Simplest whole-number form of a ratio, or null if any part is non-positive / not finite.
+function simplifyRatio(parts) {
+  if (!Array.isArray(parts) || parts.length < 2 ||
+      !parts.every((n) => typeof n === "number" && Number.isFinite(n) && n > 0)) return null;
+  // Scale decimal parts (1.5:2 → 15:20) to whole numbers, max 3 dp.
+  let k = 1;
+  while (k < 1000 && !parts.every((n) => Math.abs(n * k - Math.round(n * k)) < 1e-9)) k *= 10;
+  const ints = parts.map((n) => Math.round(n * k));
+  const g = ints.reduce(gcd2);
+  return ints.map((n) => n / g);
+}
+
+// simplify_ratio — the answer option is compute.ratio in simplest form. Exactly one
+// option must equal it (compared part-by-part); zero or two → reject.
+function verifySimplifyRatio(q, cb) {
+  const truth = simplifyRatio(cb.ratio);
+  if (!truth) {
+    return { ...q, _computeFailed: true, _computeReason: `simplify_ratio requires "ratio" of 2+ positive numbers` };
+  }
+  const hits = [];
+  q.o.forEach((opt, i) => {
+    const r = optionRatio(opt);
+    if (r && r.length === truth.length && r.every((n, j) => Math.abs(n - truth[j]) < 1e-9)) hits.push(i);
+  });
+  const label = truth.join(":");
+  if (hits.length !== 1) {
+    return { ...q, _computeFailed: true, _computeReason: hits.length
+      ? `${hits.length} options equal the simplified ratio ${label} — question is ambiguous`
+      : `verified answer ${label} is not one of the four options` };
+  }
+  if (hits[0] !== q.c) return { ...q, c: hits[0], _computeCorrected: true, _computeTruth: label };
+  return { ...q, _computeVerified: true, _computeTruth: label };
+}
+
+// share_ratio — share compute.total in compute.ratio; the answer is part number
+// compute.part (1 = first). E.g. total 60, ratio [2, 3], part 2 → 36.
+function verifyShareRatio(q, cb) {
+  const ok = typeof cb.total === "number" && Number.isFinite(cb.total) &&
+    Array.isArray(cb.ratio) && cb.ratio.length >= 2 &&
+    cb.ratio.every((n) => typeof n === "number" && Number.isFinite(n) && n > 0) &&
+    Number.isInteger(cb.part) && cb.part >= 1 && cb.part <= cb.ratio.length;
+  if (!ok) {
+    return { ...q, _computeFailed: true, _computeReason:
+      `share_ratio requires numeric "total", "ratio" of 2+ positive numbers, and "part" between 1 and the number of parts` };
+  }
+  const sum = cb.ratio.reduce((a, b) => a + b, 0);
+  return resolveTruthToOption(q, (cb.total * cb.ratio[cb.part - 1]) / sum, cb.tol);
+}
+
 // ── computeVerify ──
 // qs: array of question objects from generate(). subj kept for signature symmetry.
 // Returns the same array; questions are corrected (c fixed to the verified answer)
@@ -558,6 +623,8 @@ function computeVerify(qs) {
     // Expression-based ops branch BEFORE the legacy inputs-array validation.
     if (cb.op === "formula") return verifyFormula(q, cb);
     if (cb.op === "solve_for") return verifySolveFor(q, cb);
+    if (cb.op === "simplify_ratio") return verifySimplifyRatio(q, cb);
+    if (cb.op === "share_ratio") return verifyShareRatio(q, cb);
 
     // ── Legacy single-op path (sum…equal_to) — matching logic unchanged ──
     if (!KNOWN_OPS.has(cb.op) ||
@@ -621,5 +688,5 @@ function computeVerify(qs) {
 
 module.exports = {
   computeVerify, OPS, KNOWN_OPS, optionValue, duplicateOptionReason,
-  safeEval, parseFormula, parseEquation, balances,
+  safeEval, parseFormula, parseEquation, balances, optionRatio, simplifyRatio,
 };

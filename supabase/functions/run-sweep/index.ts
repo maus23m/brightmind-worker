@@ -73,7 +73,7 @@ WIDTH vs DEPTH: a harder version of the same skill (e.g. one-step vs two-step eq
 
 For each sub-strand set: provenance (which sources place it here) and year_flag ("agreed" if sources agree it belongs at Year {{year}}, "disputed" if some schemes place it a year earlier/later). Also produce prerequisites and the common misconceptions a teacher sees (the wrong answer, why, the correction).
 
-OUTPUT — return ONLY a JSON object of EXACTLY this shape, no prose, no markdown fences:
+OUTPUT — a JSON object of EXACTLY this shape. Every field is present; in a misconception, use null for a "sub_strand", "why" or "correct" you cannot give:
 {
   "sub_strands": [
     { "id": "notation", "name": "Algebraic notation & conventions", "depth_bands": ["recall","procedure","application","reasoning"], "provenance": ["NC-KS3","NCETM"], "year_flag": "agreed" },
@@ -83,6 +83,32 @@ OUTPUT — return ONLY a JSON object of EXACTLY this shape, no prose, no markdow
   "misconceptions": [ { "sub_strand": "simplifying", "wrong": "5x + 3 = 8x", "why": "treats unlike terms as like", "correct": "5x + 3 (cannot be combined)" } ]
 }
 That example is Year 7 "Expressions & Equations" — produce the equivalent UNION for the TARGET. Include every plausible sub-strand with honest provenance + year_flag. Return JSON only.`;
+
+// DEF-061: structured-output schema for the sweep reply (output_config.format) — the API
+// guarantees valid JSON of this shape. Port of schemas.js SWEEP_SCHEMA; keep in step
+// (sweep.test.js asserts the two are identical — DEF-048 sync debt).
+const nullableStr = { anyOf: [{ type: "string" }, { type: "null" }] };
+// SWEEP_SCHEMA_START
+const SWEEP_SCHEMA = {
+  type: "object",
+  properties: {
+    sub_strands: { type: "array", items: { type: "object", properties: {
+      id: { type: "string" }, name: { type: "string" },
+      depth_bands: { type: "array", items: { type: "string", enum: ["recall", "procedure", "application", "reasoning"] } },
+      provenance: { type: "array", items: { type: "string" } },
+      year_flag: { type: "string", enum: ["agreed", "disputed"] },
+    }, required: ["id", "name", "depth_bands", "provenance", "year_flag"], additionalProperties: false } },
+    prerequisites: { type: "array", items: { type: "object", properties: {
+      sub_strand: { type: "string" }, requires: { type: "array", items: { type: "string" } },
+    }, required: ["sub_strand", "requires"], additionalProperties: false } },
+    misconceptions: { type: "array", items: { type: "object", properties: {
+      sub_strand: nullableStr, wrong: { type: "string" }, why: nullableStr, correct: nullableStr,
+    }, required: ["sub_strand", "wrong", "why", "correct"], additionalProperties: false } },
+  },
+  required: ["sub_strands", "prerequisites", "misconceptions"],
+  additionalProperties: false,
+};
+// SWEEP_SCHEMA_END
 
 // Port of curriculum.js validateProposalPayload — throws on anything unusable.
 function validatePayload(obj: any) {
@@ -102,7 +128,9 @@ function validatePayload(obj: any) {
   return {
     sub_strands,
     prerequisites: Array.isArray(obj.prerequisites) ? obj.prerequisites : [],
-    misconceptions: Array.isArray(obj.misconceptions) ? obj.misconceptions : [],
+    // DEF-061: schema-required-but-nullable fields → drop the nulls (old optional shape).
+    misconceptions: (Array.isArray(obj.misconceptions) ? obj.misconceptions : []).map((m: any) =>
+      Object.fromEntries(Object.entries(m || {}).filter(([, v]) => v !== null && v !== undefined))),
   };
 }
 
@@ -185,7 +213,10 @@ Deno.serve(async (req) => {
     const cRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({
+        model: MODEL, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }],
+        output_config: { format: { type: "json_schema", schema: SWEEP_SCHEMA } },
+      }),
     });
     if (!cRes.ok) {
       const detail = `Claude ${cRes.status}: ${(await cRes.text()).slice(0, 200)}`;
@@ -199,10 +230,18 @@ Deno.serve(async (req) => {
       await logRun("error", detail, MODEL);
       return json(502, { error: detail });
     }
+    // DEF-061: a refusal may not match the schema — report it as such.
+    if (cData.stop_reason === "refusal") {
+      await logRun("error", `sweep declined by the model (refusal${cData.stop_details?.category ? `: ${cData.stop_details.category}` : ""})`, MODEL);
+      return json(502, { error: "sweep declined by the model (refusal)" });
+    }
     const raw = (cData.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     let payload;
-    try { payload = validatePayload(JSON.parse(raw.replace(/```json|```/g, "").trim())); }
+    try { payload = validatePayload(JSON.parse(raw)); }
     catch (e) {
+      // DEF-061: keep the text near the failure so the cause is diagnosable from sweep_runs.
+      const at = Number((/position (\d+)/.exec((e as Error).message) || [])[1] || 0);
+      console.error(`[run-sweep] bad output near: ${JSON.stringify(raw.slice(Math.max(0, at - 250), at + 250))}`);
       await logRun("error", `bad sweep output: ${(e as Error).message}`, MODEL);
       return json(502, { error: `bad sweep output: ${(e as Error).message}` });
     }

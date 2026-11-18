@@ -162,10 +162,37 @@ const taxonomy = JSON.parse(fs.readFileSync(path.join(__dirname, "frontend", "cu
     .map((f) => path.relative(__dirname, f).split(path.sep).join("/")).sort();
   const listed = callers.map((p) => p.join("/")).concat(EXEMPT).sort();
   check("DEF-060: every Claude caller is listed (new callers must be added here)", found.join() === listed.join());
+  // index.js does the check through schemas.js replyText (DEF-061), which owns it.
+  const checksTruncation = (src) => /stop_reason === "max_tokens"/.test(src) || /\breplyText\(/.test(src);
+  check("DEF-060: schemas.js replyText checks stop_reason max_tokens", /stop_reason === "max_tokens"/.test(read("schemas.js")));
   for (const p of callers) {
-    check(`DEF-060: ${p.join("/")} checks stop_reason max_tokens`, /stop_reason === "max_tokens"/.test(read(...p)));
+    check(`DEF-060: ${p.join("/")} checks stop_reason max_tokens`, checksTruncation(read(...p)));
   }
   check("DEF-060: CLI sweep cap raised above 8000", /\|\| 16000;/.test(read("scripts", "curriculum_sweep.js")));
+
+  // ── DEF-061 (class guard): every JSON handoff is a structured output ──
+  // A Y8 Ratio job failed on free-text JSON. Every caller that parses a JSON reply must send
+  // output_config with a json_schema, and none may fall back to the old fence-stripping
+  // free-text parse. index.js routes through callClaude's schema argument.
+  for (const p of callers) {
+    const src = read(...p);
+    check(`DEF-061: ${p.join("/")} sends a json_schema output format`,
+      /type: "json_schema"/.test(src) || /jsonFormat\(/.test(src));
+    check(`DEF-061: ${p.join("/")} has no free-text fence-strip JSON.parse`, !/JSON\.parse\(raw\.replace\(/.test(src));
+  }
+  const idx = read("index.js");
+  check("DEF-061: generate() passes QUESTIONS_SCHEMA", /callClaude\([^)]*QUESTIONS_SCHEMA\)/.test(idx));
+  check("DEF-061: review() passes REVIEW_SCHEMA", /callClaude\([^)]*REVIEW_SCHEMA\)/.test(idx));
+  // run-sweep's Deno port of SWEEP_SCHEMA must equal schemas.js (DEF-048 sync debt).
+  const ts = read("supabase", "functions", "run-sweep", "index.ts");
+  const block = ts.slice(ts.indexOf("// SWEEP_SCHEMA_START"), ts.indexOf("// SWEEP_SCHEMA_END"));
+  let ported = null;
+  try {
+    const nullableStr = { anyOf: [{ type: "string" }, { type: "null" }] };
+    ported = new Function("nullableStr", block.replace("// SWEEP_SCHEMA_START", "").replace("const SWEEP_SCHEMA =", "return") )(nullableStr);
+  } catch (e) { ported = null; }
+  const canon = (o) => JSON.stringify(o, (k, v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort()) : v));
+  check("DEF-061: run-sweep SWEEP_SCHEMA matches schemas.js", ported && canon(ported) === canon(require("./schemas").SWEEP_SCHEMA));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

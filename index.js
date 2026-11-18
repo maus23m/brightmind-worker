@@ -19,6 +19,8 @@ const path = require("path");
 const { buildCurriculumGuidance, approvedSubStrandIndex, normaliseDepth, filterApprovedSubStrands } = require("./curriculum");
 // CR-022 (cont.): per-child coverage matrix + width-adaptive driver (pure, see coverage.js).
 const { buildCoverageMatrix, buildCoverageTargetGuidance, untestedCells } = require("./coverage");
+// DEF-061: typed agent → code handoffs (structured-output schemas + adapters).
+const { QUESTIONS_SCHEMA, REVIEW_SCHEMA, jsonFormat, fromSchemaQuestion, fromSchemaReview, replyText, parseStructured } = require("./schemas");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
 // DEF-053/DEF-055: the live models come from runtime_config (getConfig, admin config page).
@@ -86,13 +88,17 @@ function dedup(qs) {
 // callClaude — `model` param lets a stage override the default model (DEF-040).
 // `messages` may be a plain string (single user turn) or an array of
 // {role, content} message objects for a multi-turn prompt.
-async function callClaude(apiKey, messages, maxTokens = MAX_TOKENS, system = null, model = MODEL) {
+// `schema` (DEF-061): for a JSON handoff, the schemas.js schema the reply must follow —
+// sent as output_config.format (structured outputs), so the reply is always valid JSON.
+// Omitted for non-JSON replies (the SVG diagram stage).
+async function callClaude(apiKey, messages, maxTokens = MAX_TOKENS, system = null, model = MODEL, schema = null) {
   const msgs = typeof messages === "string"
     ? [{ role: "user", content: messages }]
     : messages;
 
   const body = { model, max_tokens: maxTokens, messages: msgs };
   if (system) body.system = system;
+  if (schema) body.output_config = jsonFormat(schema);
 
   const res = await fetch(CLAUDE_API, {
     method: "POST",
@@ -107,8 +113,8 @@ async function callClaude(apiKey, messages, maxTokens = MAX_TOKENS, system = nul
   const d = await res.json();
   // DEF-060: output cut off at max_tokens is incomplete JSON/SVG — throw a clear error
   // (every caller already handles throws) instead of letting it fail later as a parse error.
-  if (d.stop_reason === "max_tokens") throw new Error(`Claude output truncated at max_tokens=${maxTokens} (model ${model})`);
-  return d.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+  // DEF-061: a refusal may not match the schema either — replyText throws on both.
+  return replyText(d, { maxTokens, model });
 }
 
 async function supaFetch(url, key, path, opts = {}) {
@@ -351,9 +357,12 @@ function buildPrompt(subj, yr, topics, diff, n, excl, rejections = [], curriculu
 async function generate(apiKey, subj, yr, topics, diff, n, excl = [], rejections = [], cfg = CONFIG_DEFAULTS, curriculum = [], coverageTarget = "") {
   const guidance = buildCurriculumGuidance(curriculum);
   const prompt = buildPrompt(subj, yr, topics, diff, n, excl, rejections, guidance, coverageTarget);
-  const raw = await callClaude(apiKey, prompt, cfg.maxTokens, null, cfg.model);
-  const qs = JSON.parse(raw.replace(/```json|```/g, "").trim());
-  if (!Array.isArray(qs) || !qs.length) throw new Error("Empty generation");
+  // DEF-061: structured output — the reply is guaranteed to match QUESTIONS_SCHEMA, so a
+  // stray character (e.g. an unquoted ratio) can no longer fail the whole job.
+  const raw = await callClaude(apiKey, prompt, cfg.maxTokens, null, cfg.model, QUESTIONS_SCHEMA);
+  const parsed = parseStructured(raw, "generation reply");
+  const qs = (parsed && Array.isArray(parsed.questions) ? parsed.questions : []).map(fromSchemaQuestion);
+  if (!qs.length) throw new Error("Empty generation");
 
   // CR-022 (cont.) Slice A: a flat matcher over every requested topic's approved
   // sub-strands. Aligns a generator label to the canonical human-approved name so the
@@ -496,8 +505,9 @@ async function review(apiKey, qs, yr, subj, cfg = CONFIG_DEFAULTS) {
     // 4000 tokens covers the auditor's rewrite headroom (was 3000) plus the small
     // child payload (was 1500), in a single round-trip. The review model follows the
     // text dial (cfg.model); the 4000-token cap is fixed (independent of MAX_TOKENS).
-    const raw = await callClaude(apiKey, prompt, 4000, null, cfg.model);
-    const results = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    // DEF-061: structured output (REVIEW_SCHEMA) — always-valid JSON of the verdict shape.
+    const raw = await callClaude(apiKey, prompt, 4000, null, cfg.model, REVIEW_SCHEMA);
+    const results = fromSchemaReview(parseStructured(raw, "review reply"));
 
     return applyReview(qs, results);
   } catch (e) {
@@ -793,6 +803,7 @@ functions.http("worker", async (req, res) => {
   }
 });
 
-// Exposed for the Tester (config.test.js). Requiring this module still registers the
-// functions.http worker above, so the Cloud Run entry point is unaffected.
-module.exports = { getConfig, _parseConfigValue, CONFIG_DEFAULTS, getChildResults };
+// Exposed for the Tester (config.test.js, schemas.test.js). Requiring this module still
+// registers the functions.http worker above, so the Cloud Run entry point is unaffected.
+// _generate/_review: DEF-061 handoff tests drive them against a mocked fetch.
+module.exports = { getConfig, _parseConfigValue, CONFIG_DEFAULTS, getChildResults, _generate: generate, _review: review };

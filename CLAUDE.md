@@ -83,8 +83,9 @@ WHEN: A generation/review prompt in `prompts/` is modified.
 CHECK: Does the validation that consumes the model output still match what the new
 prompt returns — schema, field names, data types? Generation runs in the **worker**:
 prompts live in `prompts/` (`question_gen.txt`, `diagram_system.txt`, `review.txt`),
-and the matching validation lives in `index.js` (`generate()` filter), `compute.js`
-(Stage 2), and `review.js` (Stage 4). Prompt and validation are reviewed together —
+and the matching validation lives in `schemas.js` (the structured-output schema each
+reply must follow — DEF-061), `index.js` (`generate()` filter), `compute.js` (Stage 2), and
+`review.js` (Stage 4). A prompt that changes the output shape changes its schema too. Prompt and validation are reviewed together —
 never one without the other. Prompts stay in git, never in the runtime_config table.
 
 **RULE: Teach prompts with examples, not descriptions.**

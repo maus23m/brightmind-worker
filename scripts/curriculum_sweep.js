@@ -22,7 +22,9 @@
 
 const fs = require("fs");
 const path = require("path");
-const { parseSweepResult } = require("../curriculum");
+const { validateProposalPayload } = require("../curriculum");
+// DEF-061: the sweep reply is a structured output (SWEEP_SCHEMA) — always valid JSON.
+const { SWEEP_SCHEMA, jsonFormat, fromSchemaSweep, replyText, parseStructured } = require("../schemas");
 
 const CLAUDE_API = process.env.CLAUDE_API || "https://api.anthropic.com/v1/messages";
 // DEF-053: no hardcoded model id. The model is read from runtime_config (the admin config
@@ -131,13 +133,13 @@ async function callClaude(apiKey, prompt) {
   const res = await fetch(CLAUDE_API, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model: MODEL, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: prompt }], output_config: jsonFormat(SWEEP_SCHEMA) }),
   });
   if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`);
   const d = await res.json();
   // DEF-060: truncated output is not a parse problem — report the real cause.
   if (d.stop_reason === "max_tokens") throw new Error(`sweep output truncated at ${MAX_TOKENS} tokens`);
-  return d.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+  return replyText(d, { maxTokens: MAX_TOKENS, model: MODEL }); // also throws on a refusal
 }
 
 async function writeProposal(url, key, row) {
@@ -195,7 +197,8 @@ async function sweepOne({ apiKey, subject, topic, year, scheme, sources }) {
   const template = fs.readFileSync(path.join(__dirname, "..", "prompts", "curriculum_sweep.txt"), "utf-8");
   const prompt = fillTemplate(template, { subject, topic, year: String(year), scheme, sources: sourceText });
   const raw = await callClaude(apiKey, prompt);
-  const payload = parseSweepResult(raw); // validates shape; throws on garbage
+  // validates shape; throws on garbage (and logs the text near a parse failure)
+  const payload = validateProposalPayload(fromSchemaSweep(parseStructured(raw, "sweep reply")));
   const source_run = {
     at: new Date().toISOString(),
     model: MODEL,

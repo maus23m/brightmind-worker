@@ -63,8 +63,10 @@ Be honest — if you're unsure, flag it.
 {{questions_json}}
 
 === OUTPUT ===
-Return ONLY a JSON array, no markdown. One entry per question, each with BOTH verdicts:
-[{"i":0,"audit":{"pass":true},"child":{"pass":true}}]
-For failures:
+Return a JSON object with one field, "results": one entry per question, each with BOTH verdicts. Every entry has every field — use null for a "reason" or "rewrite" that does not apply (a passing role has reason null; an audit with no fix has rewrite null). Write reasons in plain language.
+{"results":[
+{"i":0,"audit":{"pass":true,"reason":null,"rewrite":null},"child":{"pass":true,"reason":null}},
+{"i":1,"audit":{"pass":false,"reason":"two options are both correct","rewrite":null},"child":{"pass":true,"reason":null}},
 {"i":2,"audit":{"pass":false,"reason":"...","rewrite":{"q":"...","o":["...","...","...","..."],"c":0,"e":"..."}},"child":{"pass":false,"reason":"I don't understand what X means"}}
-Omit "reason"/"rewrite" when that role passes. Every question index must appear exactly once.
+]}
+Every question index must appear exactly once.

@@ -18,7 +18,7 @@ ALSO PRODUCE:
 SOURCE MATERIAL (may be empty — if so, rely on your own curriculum knowledge and set provenance accordingly):
 {{sources}}
 
-OUTPUT — return ONLY a JSON object of EXACTLY this shape, no prose, no markdown fences:
+OUTPUT — a JSON object of EXACTLY this shape. Every field is present; in a misconception, use null for a "sub_strand", "why" or "correct" you cannot give:
 
 {
   "sub_strands": [

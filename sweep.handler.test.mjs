@@ -87,5 +87,15 @@ world.claude = { stop_reason: "end_turn", content: [{ type: "text", text: "{not 
 r = await sweep();
 check("malformed (not truncated) → bad sweep output", r.status === 502 && /bad sweep output/.test(r.body.error));
 
+// DEF-061: the sweep is a structured output, and a refusal is reported as such
+check("DEF-061: request sends output_config json_schema",
+  req.output_config?.format?.type === "json_schema" && req.output_config.format.schema?.properties?.sub_strands);
+reset();
+world.claude = { stop_reason: "refusal", stop_details: { category: "cyber" }, content: [] };
+r = await sweep();
+check("DEF-061: refusal → 502 naming the refusal", r.status === 502 && /refusal/.test(r.body.error) && !/bad sweep output/.test(r.body.error));
+check("DEF-061: refusal logged to sweep_runs", runLog().some((x) => x.outcome === "error" && /refusal: cyber/.test(x.detail)));
+check("DEF-061: no proposal written on refusal", !calls.some((c) => c.url.endsWith("/rest/v1/curation_proposals")));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
