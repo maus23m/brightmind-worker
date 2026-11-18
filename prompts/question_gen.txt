@@ -38,7 +38,7 @@ Every question you produce will be checked by an automatic verifier before it re
 1. "arithmetic" — the answer is a single number worked out by a calculation on given numbers. This covers maths (range, mean, median, mode, totals, differences, percentages, fractions of a quantity, "closest to / nearest" value questions, and ANY multi-step formula — areas, Pythagoras, compound interest, trigonometry) AND calculable science (speed, density, pressure, force, rates). When verify is "arithmetic" you MUST also include a "compute" object describing how to work the answer out.
    The verifier will redo the calculation itself. So the numbers you give it must be the ACTUAL numbers from your question, and the operation must be the one that produces the correct answer.
 
-   THREE kinds of compute object — pick the one that fits:
+   FOUR kinds of compute object — pick the one that fits:
 
    (a) SINGLE-OP — {"op": "<operation>", "inputs": [<the raw numbers>]}. Use for the simple list/pair operations below.
      - "sum"        inputs = all the numbers to add
@@ -59,13 +59,18 @@ Every question you produce will be checked by an automatic verifier before it re
      - "smallest"    inputs = the four option values as numbers; answer is the least. No two options may share that least value.
      - "equal_to"    inputs = the four option values as numbers; ALSO include a "target" number. Answer is the one option equal to the target. Exactly one option must equal it — not zero, not two.
 
-   (b) FORMULA (multi-step) — {"op": "formula", "expr": "<expression>", "vars": {<name>: <number>, ...}}. Use whenever the answer needs more than one of the operations above: areas, Pythagoras, compound interest, trigonometry, any chained calculation. The verifier evaluates "expr" using your "vars".
+   (b) FORMULA (multi-step) — {"op": "formula", "expr": "<expression>", "vars": [{"name": "<name>", "value": <number>}, ...]}. Use whenever the answer needs more than one of the operations above: areas, Pythagoras, compound interest, trigonometry, any chained calculation. The verifier evaluates "expr" using your "vars".
      - "expr" is ordinary maths: the variable names you define in "vars", numbers, the operators + - * / ^ (^ is "to the power of"), and round brackets ( ). Allowed functions: sqrt, cbrt, sin, cos, tan, abs. The constant pi is available.
      - TRIGONOMETRY IS IN DEGREES: sin(30) means sine of 30 degrees = 0.5.
-     - Every name used in "expr" MUST appear in "vars", set to the actual number from your question.
+     - Every name used in "expr" MUST appear in "vars" (one {"name", "value"} pair per variable), set to the actual number from your question.
      - Examples of expr: "sqrt(a^2+b^2)" (Pythagoras), "pi*r^2" (circle area), "P*(1+r)^n" (compound interest), "d/t" (speed), "h*sin(theta)" (opposite side).
 
    (c) SOLVE_FOR (algebra) — {"op": "solve_for", "var": "x", "lhs": "<expr>", "rhs": "<expr>", "candidates": [<the four option values>]}. Use for "solve for x"-type equations. The verifier substitutes each candidate into lhs and rhs and keeps the one that makes them equal. EXACTLY ONE option must satisfy the equation — if two do (e.g. both roots of a quadratic are options), the question has two correct answers and is rejected. lhs/rhs use the same expression grammar as "formula", with "var" as the unknown.
+
+   (d) RATIO — write a ratio as a list of numbers, one per part, in the "ratio" field: 2:3 is [2, 3], 1:2:5 is [1, 2, 5]. NEVER write "2:3" or 2/5 as a number anywhere in a compute object. Two ratio ops:
+     - SIMPLIFY — {"op": "simplify_ratio", "ratio": [<the ratio from the question>]}. The correct option is that ratio in its simplest whole-number form, written with colons (e.g. "2:3"). Exactly one option may equal it.
+     - SHARE — {"op": "share_ratio", "total": <amount being shared>, "ratio": [<parts>], "part": <which part is asked for: 1 = first, 2 = second, …>}. The correct option is the size of that part.
+     - For other proportion questions (unit price, scaling a recipe, best buy) use "divide" or "formula" with plain decimal numbers.
 
 2. "equation_balance" — a chemistry question about balancing an equation. You MUST now include a compute object, in one of two shapes:
    - Coefficient question ("what number balances …?"): {"op": "equation_balance", "equation": "2 H2 + O2 -> ? H2O"} — write the full equation with a single "?" where the asked-for coefficient goes; the four options are the candidate numbers. The verifier substitutes each option and checks atom counts balance.
@@ -120,27 +125,37 @@ Speed = distance ÷ time = 120 ÷ 8 = 15 m/s.
 WORKED EXAMPLE — arithmetic (formula, Pythagoras):
 Question: "A right-angled triangle has shorter sides 6 cm and 8 cm. How long is the hypotenuse?"
 Hypotenuse = sqrt(6² + 8²) = sqrt(100) = 10 cm.
-{"q":"A right-angled triangle has shorter sides 6 cm and 8 cm. How long is the hypotenuse?","o":["7 cm","10 cm","14 cm","48 cm"],"c":1,"e":"Hypotenuse = √(6² + 8²) = √100 = 10 cm.","needsDiagram":true,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":{"a":6,"b":8}}}
+{"q":"A right-angled triangle has shorter sides 6 cm and 8 cm. How long is the hypotenuse?","o":["7 cm","10 cm","14 cm","48 cm"],"c":1,"e":"Hypotenuse = √(6² + 8²) = √100 = 10 cm.","needsDiagram":true,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":[{"name":"a","value":6},{"name":"b","value":8}]}}
 
 WORKED EXAMPLE — arithmetic (formula, circle area with π):
 Question: "A circle has radius 5 cm. What is its area? (to 1 decimal place)"
 Area = π × 5² = 78.5 cm² (1 dp).
-{"q":"A circle has radius 5 cm. What is its area, to 1 decimal place?","o":["31.4 cm²","78.5 cm²","157.1 cm²","25 cm²"],"c":1,"e":"Area = π × r² = π × 25 ≈ 78.5 cm².","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"pi*r^2","vars":{"r":5}}}
+{"q":"A circle has radius 5 cm. What is its area, to 1 decimal place?","o":["31.4 cm²","78.5 cm²","157.1 cm²","25 cm²"],"c":1,"e":"Area = π × r² = π × 25 ≈ 78.5 cm².","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"pi*r^2","vars":[{"name":"r","value":5}]}}
 
 WORKED EXAMPLE — arithmetic (formula, compound interest):
 Question: "£2000 is invested at 3% compound interest per year. What is it worth after 4 years?"
 Value = 2000 × 1.03⁴ = £2251.02 (2 dp).
-{"q":"£2000 is invested at 3% compound interest per year. What is it worth after 4 years?","o":["£2240.00","£2251.02","£2120.00","£2000.00"],"c":1,"e":"Value = 2000 × 1.03⁴ ≈ £2251.02.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"P*(1+r)^n","vars":{"P":2000,"r":0.03,"n":4}}}
+{"q":"£2000 is invested at 3% compound interest per year. What is it worth after 4 years?","o":["£2240.00","£2251.02","£2120.00","£2000.00"],"c":1,"e":"Value = 2000 × 1.03⁴ ≈ £2251.02.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"P*(1+r)^n","vars":[{"name":"P","value":2000},{"name":"r","value":0.03},{"name":"n","value":4}]}}
 
 WORKED EXAMPLE — arithmetic (formula, trigonometry — degrees):
 Question: "A ramp is 10 m long and rises at 30° to the ground. How high is the top? (to 1 dp)"
 Height = 10 × sin(30°) = 5.0 m.
-{"q":"A ramp is 10 m long and rises at 30° to the horizontal. How high is its top end, to 1 decimal place?","o":["3.3 m","5.0 m","8.7 m","10.0 m"],"c":1,"e":"Height = 10 × sin(30°) = 10 × 0.5 = 5.0 m.","needsDiagram":true,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"h*sin(theta)","vars":{"h":10,"theta":30}}}
+{"q":"A ramp is 10 m long and rises at 30° to the horizontal. How high is its top end, to 1 decimal place?","o":["3.3 m","5.0 m","8.7 m","10.0 m"],"c":1,"e":"Height = 10 × sin(30°) = 10 × 0.5 = 5.0 m.","needsDiagram":true,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"h*sin(theta)","vars":[{"name":"h","value":10},{"name":"theta","value":30}]}}
 
 WORKED EXAMPLE — arithmetic (solve_for, linear equation):
 Question: "Solve for x: 3x + 5 = 20"
 x = 5, because 3×5 + 5 = 20.
 {"q":"Solve for x:  3x + 5 = 20","o":["3","5","7.5","15"],"c":1,"e":"3x = 15, so x = 5.","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"solve_for","var":"x","lhs":"3*x+5","rhs":"20","candidates":[3,5,7.5,15]}}
+
+WORKED EXAMPLE — arithmetic (simplify_ratio):
+Question: "Write the ratio 12:18 in its simplest form."
+Both parts divide by 6: 12:18 = 2:3.
+{"q":"Write the ratio 12:18 in its simplest form.","o":["6:9","2:3","3:2","4:6"],"c":1,"e":"Divide both parts by 6, the highest common factor: 12:18 = 2:3.","subStrand":"Simplifying ratios","depth":"procedure","subtopic":"Simplifying ratios","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"simplify_ratio","ratio":[12,18]}}
+
+WORKED EXAMPLE — arithmetic (share_ratio):
+Question: "Amy and Ben share £60 in the ratio 2:3. How much does Ben get?"
+5 parts in total, each part is £12, Ben has 3 parts = £36. Ben is the SECOND part, so part = 2.
+{"q":"Amy and Ben share £60 in the ratio 2:3. How much does Ben get?","o":["£24","£36","£40","£20"],"c":1,"e":"2 + 3 = 5 parts, £60 ÷ 5 = £12 per part, Ben gets 3 × £12 = £36.","subStrand":"Sharing in a ratio","depth":"application","subtopic":"Sharing in a ratio","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"share_ratio","total":60,"ratio":[2,3],"part":2}}
 
 WORKED EXAMPLE — equation_balance (coefficient):
 Question: "Balance the equation: 2H₂ + O₂ → __ H₂O. What number goes in the gap?"
@@ -388,6 +403,10 @@ BAD diagramPrompt (count question):
 Keep diagrams simple and focused. One chart, one shape, one scene. Not four things side by side.
 {{rejections}}{{exclusions}}
 
-Return ONLY a JSON array, no markdown, no backticks. Every object MUST include the "verify" field, the "subStrand" field (the sub-skill — see CURRICULUM COVERAGE), the "depth" field (one of recall/procedure/application/reasoning), and the "subtopic" field (= subStrand, deprecated alias). Objects with verify "arithmetic" MUST include the "compute" object — single-op, formula, or solve_for; objects with verify "equation_balance" MUST include an equation_balance compute object:
-[{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","subStrand":"Expanding single brackets","depth":"procedure","subtopic":"Expanding single brackets","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist...","verify":"arithmetic","compute":{"op":"range","inputs":[1,2,3]}}]
-[{"q":"formula question","o":["A","B","C","D"],"c":1,"e":"explanation","subStrand":"Pythagoras' theorem","depth":"application","subtopic":"Pythagoras' theorem","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":{"a":6,"b":8}}}]
+OUTPUT — return a JSON object with one field, "questions": the list of question objects. Every question object has EVERY field below. Use null where a field does not apply: "diagramPrompt" is null when needsDiagram is false, and "compute" is null when verify is "none". Objects with verify "arithmetic" MUST have a compute object — single-op, formula, solve_for, simplify_ratio or share_ratio; objects with verify "equation_balance" MUST have an equation_balance compute object ("equation" is null when every option is a full equation). Write your reasoning for the child in "q" and "e" in plain language — ratios like 2:3 are fine there; only the compute object is strictly numbers.
+{"questions":[
+{"q":"question text","o":["A","B","C","D"],"c":0,"e":"explanation","subStrand":"Expanding single brackets","depth":"procedure","subtopic":"Expanding single brackets","needsDiagram":true,"diagramPrompt":"conversational scene description ending with label whitelist...","verify":"arithmetic","compute":{"op":"range","inputs":[1,2,3]}},
+{"q":"formula question","o":["A","B","C","D"],"c":1,"e":"explanation","subStrand":"Pythagoras' theorem","depth":"application","subtopic":"Pythagoras' theorem","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"formula","expr":"sqrt(a^2+b^2)","vars":[{"name":"a","value":6},{"name":"b","value":8}]}},
+{"q":"ratio question","o":["A","B","C","D"],"c":2,"e":"explanation","subStrand":"Sharing in a ratio","depth":"application","subtopic":"Sharing in a ratio","needsDiagram":false,"diagramPrompt":null,"verify":"arithmetic","compute":{"op":"share_ratio","total":45,"ratio":[4,5],"part":1}},
+{"q":"fact question","o":["A","B","C","D"],"c":3,"e":"explanation","subStrand":"Photosynthesis","depth":"recall","subtopic":"Photosynthesis","needsDiagram":false,"diagramPrompt":null,"verify":"none","compute":null}
+]}
